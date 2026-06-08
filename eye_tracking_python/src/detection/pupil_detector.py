@@ -1,60 +1,89 @@
 """
-Pupil detector with a four-level fallback hierarchy.
+Pupil detector — v0.2 (multi-signal weighted candidate scoring).
 
-Detection priority (highest to lowest confidence):
-    1. Contour-based ellipse fit  — best accuracy in good lighting
-    2. Hough circle transform     — works when contours are fragmented
-    3. Darkest-region centroid    — last geometric resort
-    4. Temporal prediction        — uses the previous frame's result
+v0.1 flaw: candidate score = circularity × area_ratio.
+  This ignores darkness, contrast, and temporal consistency.
+  A bright circular highlight scored identically to a dark pupil.
 
-The eye ROI is pre-processed with CLAHE and Gaussian blur to increase
-robustness to lighting variation and motion blur.
+v0.2 fix: each contour candidate is scored on 7 signals:
+  1. darkness      — mean pixel intensity inside contour (lower = better)
+  2. circularity   — 4π·area / perimeter²
+  3. contrast      — mean(surrounding ring) - mean(inside) (higher = better)
+  4. size          — area relative to expected pupil size
+  5. shape         — ellipse axis ratio (1.0 = perfect circle)
+  6. center_dist   — distance from ROI centre (soft prior only)
+  7. temporal      — distance from predicted position (previous frame)
 
-All coordinates returned are in two spaces:
-    center_roi   — within the (normalised) eye ROI image
-    center_frame — within the original full-resolution frame
+Each signal is normalised to [0, 1] and combined with configurable weights
+defined in PupilScoringConfig.
+
+Hard rejection filters (applied BEFORE scoring):
+  - Area outside [min_area, max_area]
+  - Circularity < min_circularity
+  - Mean intensity > max_mean_intensity  (rejects bright reflections)
+  - Axis ratio > max_axis_ratio
+  - Centre outside ROI
+
+The four-level fallback hierarchy is preserved for when contour detection
+fails completely, but the ordering now reflects confidence accurately:
+  1. Contour + ellipse fit (primary, scored)
+  2. Hough circle transform (fallback)
+  3. Darkest-region centroid (last geometric resort)
+  4. Temporal prediction (only if all geometric methods fail)
 """
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple
+import math
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
 
 from config import AppConfig
-from src.data.schema import DetectionMethod, EyeRegionData, PupilData
-from src.utils.geometry import contour_circularity
+from src.data.schema import DetectionMethod, EyeRegionData, PupilCandidate, PupilData
+from src.utils.geometry import contour_circularity, euclidean_distance
 
 logger = logging.getLogger(__name__)
 
 
 class PupilDetector:
     """
-    Stateful pupil detector that keeps one frame of history for temporal
-    prediction fallback.
+    Stateful pupil detector that uses multi-signal scoring to select the best
+    candidate from each frame, with temporal prediction as a last resort.
+
+    Maintain one instance per eye per session.
+    Call reset() between sessions.
 
     Usage:
         detector = PupilDetector(config)
-        pupil = detector.detect(eye_region)   # call per-eye, per-frame
+        pupil = detector.detect(eye_region)
     """
 
     def __init__(self, config: AppConfig) -> None:
-        self._cfg = config.detection
-        self._last_result: Optional[PupilData] = None
+        self._det_cfg = config.detection
+        self._score_cfg = config.pupil_scoring
+        self._debug = config.debug.enabled
 
-        # Pre-build CLAHE object (creating per-frame is wasteful)
+        self._last_result: Optional[PupilData] = None
+        # Temporal prediction: keep a short position history
+        self._position_history: List[Tuple[float, float]] = []
+        self._history_maxlen: int = config.temporal.history_frames
+
         self._clahe = cv2.createCLAHE(
-            clipLimit=self._cfg.pupil_clahe_clip_limit,
-            tileGridSize=self._cfg.pupil_clahe_grid_size,
+            clipLimit=self._det_cfg.pupil_clahe_clip_limit,
+            tileGridSize=self._det_cfg.pupil_clahe_grid_size,
         )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def detect(self, eye_region: EyeRegionData) -> PupilData:
         """
-        Detect the pupil in a single eye ROI.
-
-        Returns an empty PupilData() with detected=False when every method
-        fails; never raises.
+        Detect pupil in one eye ROI.  Never raises.
+        Returns PupilData with detected=False when all methods fail.
         """
         if not eye_region.detected or eye_region.roi_image is None:
             return PupilData()
@@ -65,28 +94,28 @@ class PupilDetector:
             logger.debug("Pupil pre-processing failed: %s", exc)
             return PupilData()
 
-        roi_w = eye_region.roi_image.shape[1]
-        roi_h = eye_region.roi_image.shape[0]
+        roi_h, roi_w = gray.shape[:2]
+        predicted_roi = self._predicted_roi_pos(eye_region, roi_w, roi_h)
 
-        # --- Method 1: contour + ellipse fit ---------------------------------
-        result = self._detect_contour(gray, eye_region, roi_w, roi_h)
-        if result.confidence >= 0.5:
-            self._last_result = result
+        # Method 1 — multi-signal contour scoring (primary)
+        result = self._detect_contour(gray, eye_region, roi_w, roi_h, predicted_roi)
+        if result.confidence >= 0.45:
+            self._record_result(result)
             return result
 
-        # --- Method 2: Hough circle transform --------------------------------
-        result = self._detect_hough(gray, eye_region, roi_w, roi_h)
-        if result.confidence >= 0.3:
-            self._last_result = result
+        # Method 2 — Hough circle (fallback when contours are fragmented)
+        result = self._detect_hough(gray, eye_region, roi_w, roi_h, predicted_roi)
+        if result.confidence >= 0.25:
+            self._record_result(result)
             return result
 
-        # --- Method 3: darkest region centroid --------------------------------
+        # Method 3 — darkest centroid (last geometric attempt)
         result = self._detect_darkest(gray, eye_region, roi_w, roi_h)
-        if result.confidence >= 0.1:
-            self._last_result = result
+        if result.confidence >= 0.08:
+            self._record_result(result)
             return result
 
-        # --- Method 4: temporal prediction -----------------------------------
+        # Method 4 — temporal prediction
         if self._last_result is not None and self._last_result.detected:
             pred = PupilData(
                 detected=True,
@@ -102,28 +131,28 @@ class PupilDetector:
         return PupilData()
 
     def reset(self) -> None:
-        """Clear temporal history — call at the start of a new session."""
         self._last_result = None
+        self._position_history.clear()
 
     # ------------------------------------------------------------------
-    # Image pre-processing
+    # Pre-processing
     # ------------------------------------------------------------------
 
     def _preprocess(self, roi_bgr: np.ndarray) -> np.ndarray:
         """
-        Convert to grayscale, apply CLAHE for contrast enhancement,
-        then Gaussian blur to reduce sensor noise.
+        Grayscale → CLAHE (contrast enhancement) → Gaussian blur (noise reduction).
+        CLAHE is the most important step: it normalises local contrast so that
+        the pupil boundary remains detectable under uneven lighting.
         """
         gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
         gray = self._clahe.apply(gray)
-        ksize = self._cfg.pupil_blur_kernel_size
-        if ksize % 2 == 0:
-            ksize += 1  # Gaussian kernel must be odd
-        gray = cv2.GaussianBlur(gray, (ksize, ksize), 0)
-        return gray
+        k = self._det_cfg.pupil_blur_kernel_size
+        if k % 2 == 0:
+            k += 1
+        return cv2.GaussianBlur(gray, (k, k), 0)
 
     # ------------------------------------------------------------------
-    # Method 1 — contour-based ellipse fit
+    # Method 1 — multi-signal contour scoring
     # ------------------------------------------------------------------
 
     def _detect_contour(
@@ -132,25 +161,22 @@ class PupilDetector:
         eye: EyeRegionData,
         roi_w: int,
         roi_h: int,
+        predicted_roi: Optional[Tuple[float, float]],
     ) -> PupilData:
         """
-        Use adaptive thresholding to isolate the dark pupil, then find
-        the best-fitting ellipse among the candidate contours.
+        Threshold → contours → score each candidate → return best.
 
-        Adaptive thresholding is preferred over global because it handles
-        uneven illumination (e.g. single-sided desk lamp).
+        Key difference from v0.1: the scoring function rejects bright regions
+        (corneal reflections, glasses glare) before scoring, and weights
+        darkness and contrast heavily.
         """
-        # Inverse threshold: pupil is dark → becomes white in binary mask
         thresh = cv2.adaptiveThreshold(
-            gray,
-            255,
+            gray, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY_INV,
-            self._cfg.pupil_adaptive_block_size,
-            self._cfg.pupil_adaptive_c,
+            self._det_cfg.pupil_adaptive_block_size,
+            self._det_cfg.pupil_adaptive_c,
         )
-
-        # Morphological close to fill small holes in the pupil blob
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
@@ -158,64 +184,188 @@ class PupilDetector:
         if not contours:
             return PupilData()
 
-        best_score = -1.0
-        best_pupil: Optional[PupilData] = None
+        candidates: List[Tuple[float, PupilData, PupilCandidate]] = []
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < self._cfg.pupil_min_area_px or area > self._cfg.pupil_max_area_px:
+            if area < self._det_cfg.pupil_min_area_px or area > self._det_cfg.pupil_max_area_px:
                 continue
 
             perimeter = cv2.arcLength(cnt, closed=True)
             circularity = contour_circularity(area, perimeter)
-            if circularity < self._cfg.pupil_min_circularity:
+            if circularity < self._det_cfg.pupil_min_circularity:
                 continue
 
-            # Need ≥5 points for ellipse fitting
             if len(cnt) < 5:
                 continue
 
             try:
-                (cx, cy), (ma, Mi), angle = cv2.fitEllipse(cnt)
+                (cx, cy), (ma, mi), angle = cv2.fitEllipse(cnt)
             except cv2.error:
                 continue
 
-            # Reject degenerate ellipses
-            minor_axis = min(ma, Mi)
-            major_axis = max(ma, Mi)
-            if minor_axis < 2.0:
-                continue
-            axis_ratio = major_axis / max(minor_axis, 1e-9)
-            if axis_ratio > self._cfg.pupil_max_axis_ratio:
+            minor_ax = min(ma, mi)
+            major_ax = max(ma, mi)
+            if minor_ax < 2.0:
                 continue
 
-            # Reject centres outside the ROI
+            axis_ratio = major_ax / max(minor_ax, 1e-9)
+            if axis_ratio > self._det_cfg.pupil_max_axis_ratio:
+                continue
+
+            # Hard-reject if centre falls outside ROI
             if not (0 <= cx <= roi_w and 0 <= cy <= roi_h):
                 continue
 
-            # Composite quality score
-            radius = minor_axis / 2.0
-            score = circularity * min(1.0, area / (self._cfg.pupil_min_area_px * 10))
+            # ------- DARKNESS CHECK (v0.1 was missing this) --------
+            # Create a mask for this contour and measure mean intensity.
+            mask = np.zeros(gray.shape, dtype=np.uint8)
+            cv2.drawContours(mask, [cnt], -1, 255, -1)
+            mean_inside = float(cv2.mean(gray, mask=mask)[0])
 
-            if score > best_score:
-                best_score = score
-                roi_center = (float(cx), float(cy))
-                frame_center = self._roi_to_frame(roi_center, eye, roi_w, roi_h)
-                best_pupil = PupilData(
-                    detected=True,
-                    center_roi=roi_center,
-                    center_frame=frame_center,
-                    diameter_px=minor_axis,
-                    radius_px=radius,
-                    ellipse_axes=(major_axis, minor_axis),
-                    ellipse_angle_deg=float(angle),
-                    confidence=min(score, 0.95),
-                    method=DetectionMethod.CONTOUR_ELLIPSE,
-                )
+            # Hard-reject bright regions (reflections, highlights)
+            if mean_inside > self._det_cfg.pupil_max_mean_intensity:
+                continue
 
-        if best_pupil is not None:
-            return best_pupil
-        return PupilData()
+            # -------- CONTRAST CHECK --------------------------------
+            # Dilate the mask to get a surrounding ring, then measure contrast.
+            ring_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+            dilated = cv2.dilate(mask, ring_kernel, iterations=1)
+            ring_mask = cv2.subtract(dilated, mask)
+            mean_ring = float(cv2.mean(gray, mask=ring_mask)[0])
+            contrast = mean_ring - mean_inside
+
+            if contrast < self._det_cfg.pupil_min_contrast:
+                continue
+
+            # -------- SCORE -----------------------------------------
+            roi_center = (float(cx), float(cy))
+            dist_from_center = math.hypot(cx - roi_w / 2, cy - roi_h / 2)
+
+            if predicted_roi is not None:
+                dist_from_pred = euclidean_distance(roi_center, predicted_roi)
+            else:
+                dist_from_pred = 0.0
+
+            candidate_info = PupilCandidate(
+                center_roi=roi_center,
+                area=area,
+                circularity=circularity,
+                axis_ratio=axis_ratio,
+                mean_intensity=mean_inside,
+                contrast=contrast,
+                distance_from_center=dist_from_center,
+                distance_from_prediction=dist_from_pred,
+                score=0.0,   # filled below
+            )
+
+            score = self._score_candidate(
+                candidate_info, roi_w, roi_h, predicted_roi is not None
+            )
+            candidate_info = PupilCandidate(
+                **{**candidate_info.__dict__, "score": score}
+            )
+
+            frame_center = self._roi_to_frame(roi_center, eye, roi_w, roi_h)
+            pupil = PupilData(
+                detected=True,
+                center_roi=roi_center,
+                center_frame=frame_center,
+                diameter_px=minor_ax,
+                radius_px=minor_ax / 2.0,
+                ellipse_axes=(major_ax, minor_ax),
+                ellipse_angle_deg=float(angle),
+                confidence=min(score, 0.95),
+                method=DetectionMethod.CONTOUR_ELLIPSE,
+                candidates=[candidate_info] if self._debug else None,
+            )
+            candidates.append((score, pupil, candidate_info))
+
+        if not candidates:
+            return PupilData()
+
+        # Sort by score descending and pick the best
+        candidates.sort(key=lambda t: t[0], reverse=True)
+        best_score, best_pupil, _ = candidates[0]
+
+        # In debug mode, attach all candidates to the winning PupilData
+        if self._debug and best_pupil.candidates is not None:
+            all_infos = [c for _, _, c in candidates]
+            best_pupil = PupilData(
+                **{**best_pupil.__dict__, "candidates": all_infos}
+            )
+
+        return best_pupil
+
+    def _score_candidate(
+        self,
+        c: PupilCandidate,
+        roi_w: int,
+        roi_h: int,
+        has_prediction: bool,
+    ) -> float:
+        """
+        Compute a weighted composite score ∈ [0, 1] for a pupil candidate.
+
+        Each signal is independently normalised to [0, 1] so that weights
+        are directly comparable.
+        """
+        cfg = self._score_cfg
+
+        # 1. Darkness: lower intensity = darker pupil = better
+        #    Normalise: 0 intensity → 1.0; max_mean_intensity → 0.0
+        darkness = 1.0 - (c.mean_intensity / self._det_cfg.pupil_max_mean_intensity)
+        darkness = max(0.0, min(1.0, darkness))
+
+        # 2. Circularity (already 0-1, 1.0 = perfect circle)
+        circularity = min(1.0, c.circularity)
+
+        # 3. Contrast: saturate at 80 intensity units
+        contrast = min(1.0, c.contrast / 80.0)
+
+        # 4. Size: expected pupil occupies ~5% of ROI area
+        roi_area = roi_w * roi_h
+        expected_area = roi_area * cfg.expected_area_fraction
+        size_deviation = abs(c.area - expected_area) / max(expected_area, 1.0)
+        size = max(0.0, 1.0 - size_deviation)
+
+        # 5. Shape: axis_ratio 1.0 = perfect; penalise elongation
+        shape = max(0.0, 1.0 - (c.axis_ratio - 1.0) / self._det_cfg.pupil_max_axis_ratio)
+
+        # 6. Distance from ROI centre (soft prior — pupils can be off-centre)
+        max_dist = math.hypot(roi_w, roi_h) / 2.0
+        center_dist = max(0.0, 1.0 - c.distance_from_center / max(max_dist, 1.0))
+
+        # 7. Temporal consistency: close to predicted position
+        if has_prediction and c.distance_from_prediction > 0:
+            temporal = max(
+                0.0,
+                1.0 - c.distance_from_prediction / self._det_cfg.max_pupil_jump_px,
+            )
+        else:
+            temporal = 0.5   # neutral when no prediction is available
+
+        # Weighted sum
+        total_weight = (
+            cfg.weight_darkness +
+            cfg.weight_circularity +
+            cfg.weight_contrast +
+            cfg.weight_size +
+            cfg.weight_shape +
+            cfg.weight_center_dist +
+            cfg.weight_temporal
+        )
+        score = (
+            cfg.weight_darkness    * darkness +
+            cfg.weight_circularity * circularity +
+            cfg.weight_contrast    * contrast +
+            cfg.weight_size        * size +
+            cfg.weight_shape       * shape +
+            cfg.weight_center_dist * center_dist +
+            cfg.weight_temporal    * temporal
+        ) / max(total_weight, 1e-9)
+
+        return float(score)
 
     # ------------------------------------------------------------------
     # Method 2 — Hough circle transform
@@ -227,33 +377,42 @@ class PupilDetector:
         eye: EyeRegionData,
         roi_w: int,
         roi_h: int,
+        predicted_roi: Optional[Tuple[float, float]],
     ) -> PupilData:
         """
-        Apply Hough circle detection. Slower and less accurate than the
-        contour method but can find circles when contours are open/partial.
+        Hough circles: useful when the pupil boundary is partially occluded
+        (droopy eyelid, glasses frame) so the contour is open.
+        Pick the circle nearest to the predicted position, or ROI centre.
         """
         circles = cv2.HoughCircles(
-            gray,
-            cv2.HOUGH_GRADIENT,
-            dp=self._cfg.hough_dp,
-            minDist=self._cfg.hough_min_dist_px,
-            param1=self._cfg.hough_param1,
-            param2=self._cfg.hough_param2,
-            minRadius=self._cfg.hough_min_radius_px,
-            maxRadius=self._cfg.hough_max_radius_px,
+            gray, cv2.HOUGH_GRADIENT,
+            dp=self._det_cfg.hough_dp,
+            minDist=self._det_cfg.hough_min_dist_px,
+            param1=self._det_cfg.hough_param1,
+            param2=self._det_cfg.hough_param2,
+            minRadius=self._det_cfg.hough_min_radius_px,
+            maxRadius=self._det_cfg.hough_max_radius_px,
         )
         if circles is None:
             return PupilData()
 
         circles = np.round(circles[0, :]).astype(int)
-        # Pick the circle nearest to the ROI centre (most likely to be the pupil)
-        roi_cx, roi_cy = roi_w / 2.0, roi_h / 2.0
-        best_circle = min(circles, key=lambda c: (c[0] - roi_cx) ** 2 + (c[1] - roi_cy) ** 2)
 
-        cx, cy, r = float(best_circle[0]), float(best_circle[1]), float(best_circle[2])
+        # Anchor: use temporal prediction if available, else ROI centre
+        anchor = predicted_roi if predicted_roi is not None else (roi_w / 2.0, roi_h / 2.0)
+        best = min(circles, key=lambda c: (c[0] - anchor[0]) ** 2 + (c[1] - anchor[1]) ** 2)
+
+        cx, cy, r = float(best[0]), float(best[1]), float(best[2])
+
+        # Basic darkness check on Hough result
+        mask = np.zeros(gray.shape, dtype=np.uint8)
+        cv2.circle(mask, (int(cx), int(cy)), max(1, int(r)), 255, -1)
+        mean_inside = float(cv2.mean(gray, mask=mask)[0])
+        if mean_inside > self._det_cfg.pupil_max_mean_intensity * 1.2:
+            return PupilData()   # too bright — probably a reflection
+
         roi_center = (cx, cy)
         frame_center = self._roi_to_frame(roi_center, eye, roi_w, roi_h)
-
         return PupilData(
             detected=True,
             center_roi=roi_center,
@@ -261,12 +420,12 @@ class PupilDetector:
             diameter_px=r * 2,
             radius_px=r,
             ellipse_axes=(r * 2, r * 2),
-            confidence=0.4,
+            confidence=0.30,
             method=DetectionMethod.HOUGH_CIRCLE,
         )
 
     # ------------------------------------------------------------------
-    # Method 3 — darkest region centroid
+    # Method 3 — darkest-region centroid
     # ------------------------------------------------------------------
 
     def _detect_darkest(
@@ -276,15 +435,9 @@ class PupilDetector:
         roi_w: int,
         roi_h: int,
     ) -> PupilData:
-        """
-        Find the centroid of the darkest region in the ROI.
-        Very simple but remarkably robust as a last resort.
-        """
-        # Find pixels in the lowest-intensity decile
+        """Last geometric resort. Finds the centroid of the darkest 10% of pixels."""
         threshold = int(np.percentile(gray, 10))
         mask = (gray <= threshold).astype(np.uint8) * 255
-
-        # Remove tiny noise blobs
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
@@ -294,23 +447,57 @@ class PupilDetector:
 
         cx = moments["m10"] / moments["m00"]
         cy = moments["m01"] / moments["m00"]
-        roi_center = (float(cx), float(cy))
-        frame_center = self._roi_to_frame(roi_center, eye, roi_w, roi_h)
 
-        # Estimate radius from blob area
+        # Additional sanity: centroid must be reasonably dark
+        gray_val = float(gray[min(int(cy), roi_h - 1), min(int(cx), roi_w - 1)])
+        if gray_val > self._det_cfg.pupil_max_mean_intensity * 1.5:
+            return PupilData()
+
         area = float(np.sum(mask > 0))
-        import math
         radius = math.sqrt(area / math.pi) if area > 0 else 5.0
 
+        roi_center = (float(cx), float(cy))
         return PupilData(
             detected=True,
             center_roi=roi_center,
-            center_frame=frame_center,
+            center_frame=self._roi_to_frame(roi_center, eye, roi_w, roi_h),
             diameter_px=radius * 2,
             radius_px=radius,
-            confidence=0.15,
+            confidence=0.10,
             method=DetectionMethod.DARKEST_CENTROID,
         )
+
+    # ------------------------------------------------------------------
+    # Temporal helpers
+    # ------------------------------------------------------------------
+
+    def _predicted_roi_pos(
+        self,
+        eye: EyeRegionData,
+        roi_w: int,
+        roi_h: int,
+    ) -> Optional[Tuple[float, float]]:
+        """
+        Predict the pupil position in ROI coordinates using the last known frame result.
+        Returns None if no history exists.
+        """
+        if self._last_result is None or not self._last_result.detected:
+            return None
+        # Map last frame-space position back to current ROI space
+        scale_x = roi_w / eye.roi_w if eye.roi_w > 0 else 1.0
+        scale_y = roi_h / eye.roi_h if eye.roi_h > 0 else 1.0
+        fx, fy = self._last_result.center_frame
+        px = (fx - eye.roi_x) * scale_x
+        py = (fy - eye.roi_y) * scale_y
+        if 0 <= px <= roi_w and 0 <= py <= roi_h:
+            return (px, py)
+        return None
+
+    def _record_result(self, pupil: PupilData) -> None:
+        self._last_result = pupil
+        if len(self._position_history) >= self._history_maxlen:
+            self._position_history.pop(0)
+        self._position_history.append(pupil.center_frame)
 
     # ------------------------------------------------------------------
     # Coordinate conversion
@@ -324,13 +511,13 @@ class PupilDetector:
         roi_h: int,
     ) -> Tuple[float, float]:
         """
-        Map a point from normalised ROI coordinates back to full-frame pixels.
-
-        The eye ROI was scaled from (eye.roi_w × eye.roi_h) to
-        (roi_w × roi_h) during extraction, so we reverse that scaling.
+        Map a pixel position in the normalised ROI back to full-frame pixels.
+        The ROI was resized from (eye.roi_w × eye.roi_h) to (roi_w × roi_h),
+        so we reverse that scale then add the ROI origin offset.
         """
         scale_x = eye.roi_w / roi_w if roi_w > 0 else 1.0
         scale_y = eye.roi_h / roi_h if roi_h > 0 else 1.0
-        fx = eye.roi_x + roi_center[0] * scale_x
-        fy = eye.roi_y + roi_center[1] * scale_y
-        return (float(fx), float(fy))
+        return (
+            float(eye.roi_x + roi_center[0] * scale_x),
+            float(eye.roi_y + roi_center[1] * scale_y),
+        )

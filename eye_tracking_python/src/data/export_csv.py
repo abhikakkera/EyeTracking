@@ -1,14 +1,20 @@
 """
-CSV export for frame-level tracking data.
+CSV export for frame-level tracking data — v0.3.
 
-Writes one CSV file per session:
-    <output_dir>/<session_id>_frames.csv        — per-frame records
-    <output_dir>/<session_id>_blinks.csv        — blink events
-    <output_dir>/<session_id>_saccades.csv      — saccade events
-    <output_dir>/<session_id>_fixations.csv     — fixation events
+Changes from v0.1:
+  - gaze_acceleration field renamed to gaze_acceleration_px_per_sec2
+  - gaze_jerk_px_per_sec3 column added
+  - quality_flags column added (pipe-separated list, e.g. "low_light|blink")
+  - SaccadeEvent gains event_id + mean_velocity_px_per_sec
+  - FixationEvent gains event_id + num_frames
 
-All coordinate values are rounded to 4 decimal places to keep file sizes
-manageable without losing clinically relevant precision.
+Writes one CSV file per event type per session:
+    <output_dir>/<session_id>_frames.csv
+    <output_dir>/<session_id>_blinks.csv
+    <output_dir>/<session_id>_saccades.csv
+    <output_dir>/<session_id>_fixations.csv
+
+All coordinate values are rounded to 4 decimal places.
 """
 from __future__ import annotations
 
@@ -24,14 +30,10 @@ logger = logging.getLogger(__name__)
 
 
 def export_session(session: SessionData, output_dir: str | Path) -> List[Path]:
-    """
-    Export all session data to CSV files.
-
-    Returns a list of the paths written.
-    """
+    """Export all session data to CSV files. Returns list of paths written."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    sid = session.metadata.session_id[:16]  # truncate UUID for filenames
+    sid = session.metadata.session_id[:16]
 
     written: List[Path] = []
     written.append(_write_frames(session.frames, out / f"{sid}_frames.csv"))
@@ -62,9 +64,17 @@ _FRAME_FIELDS = [
     "smooth_gaze_x", "smooth_gaze_y",
     "blink_detected",
     "left_ear", "right_ear",
-    "gaze_velocity_px_per_sec", "gaze_acceleration",
+    "gaze_velocity_px_per_sec",
+    "gaze_acceleration_px_per_sec2",
+    "gaze_jerk_px_per_sec3",
     "confidence_score", "frame_quality", "blur_score",
+    "quality_flags",
     "left_detection_method", "right_detection_method",
+    # v0.3 camera distance guidance
+    "camera_distance_status", "camera_distance_score",
+    "distance_guidance_message",
+    "face_bbox_width_ratio", "face_bbox_height_ratio",
+    "inter_eye_distance_px",
 ]
 
 
@@ -102,12 +112,21 @@ def _write_frames(records: List[FrameRecord], path: Path) -> Path:
                 "left_ear": _r4(r.left_ear),
                 "right_ear": _r4(r.right_ear),
                 "gaze_velocity_px_per_sec": _r4(r.gaze_velocity_px_per_sec),
-                "gaze_acceleration": _r4(r.gaze_acceleration),
+                "gaze_acceleration_px_per_sec2": _r4(r.gaze_acceleration_px_per_sec2),
+                "gaze_jerk_px_per_sec3": _r4(r.gaze_jerk_px_per_sec3),
                 "confidence_score": _r4(r.confidence_score),
                 "frame_quality": r.frame_quality.value,
                 "blur_score": _r4(r.blur_score),
+                "quality_flags": "|".join(r.quality_flags) if r.quality_flags else "",
                 "left_detection_method": r.left_detection_method.value,
                 "right_detection_method": r.right_detection_method.value,
+                # v0.3
+                "camera_distance_status": r.camera_distance_status,
+                "camera_distance_score": _r4(r.camera_distance_score),
+                "distance_guidance_message": r.distance_guidance_message,
+                "face_bbox_width_ratio": _r4(r.face_bbox_width_ratio),
+                "face_bbox_height_ratio": _r4(r.face_bbox_height_ratio),
+                "inter_eye_distance_px": _r4(r.inter_eye_distance_px),
             })
     logger.debug("Wrote %d frame records to %s", len(records), path)
     return path
@@ -118,7 +137,8 @@ def _write_frames(records: List[FrameRecord], path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 _BLINK_FIELDS = [
-    "session_id", "start_timestamp_sec", "end_timestamp_sec",
+    "session_id", "event_id",
+    "start_timestamp_sec", "end_timestamp_sec",
     "duration_ms", "affected_eye", "confidence",
 ]
 
@@ -130,6 +150,7 @@ def _write_blinks(events: List[BlinkEvent], path: Path) -> Path:
         for e in events:
             writer.writerow({
                 "session_id": e.session_id,
+                "event_id": e.event_id,
                 "start_timestamp_sec": _r4(e.start_timestamp_sec),
                 "end_timestamp_sec": _r4(e.end_timestamp_sec),
                 "duration_ms": _r2(e.duration_ms),
@@ -144,9 +165,11 @@ def _write_blinks(events: List[BlinkEvent], path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 _SACCADE_FIELDS = [
-    "session_id", "start_timestamp_sec", "end_timestamp_sec",
+    "session_id", "event_id",
+    "start_timestamp_sec", "end_timestamp_sec",
     "duration_ms", "start_x", "start_y", "end_x", "end_y",
-    "amplitude_px", "peak_velocity_px_per_sec", "direction_deg", "confidence",
+    "amplitude_px", "peak_velocity_px_per_sec", "mean_velocity_px_per_sec",
+    "direction_deg", "confidence",
 ]
 
 
@@ -157,6 +180,7 @@ def _write_saccades(events: List[SaccadeEvent], path: Path) -> Path:
         for e in events:
             writer.writerow({
                 "session_id": e.session_id,
+                "event_id": e.event_id,
                 "start_timestamp_sec": _r4(e.start_timestamp_sec),
                 "end_timestamp_sec": _r4(e.end_timestamp_sec),
                 "duration_ms": _r2(e.duration_ms),
@@ -166,6 +190,7 @@ def _write_saccades(events: List[SaccadeEvent], path: Path) -> Path:
                 "end_y": _r4(e.end_y),
                 "amplitude_px": _r2(e.amplitude_px),
                 "peak_velocity_px_per_sec": _r2(e.peak_velocity_px_per_sec),
+                "mean_velocity_px_per_sec": _r2(e.mean_velocity_px_per_sec),
                 "direction_deg": _r2(e.direction_deg),
                 "confidence": _r4(e.confidence),
             })
@@ -177,8 +202,10 @@ def _write_saccades(events: List[SaccadeEvent], path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 _FIXATION_FIELDS = [
-    "session_id", "start_timestamp_sec", "end_timestamp_sec",
-    "duration_ms", "center_x", "center_y", "dispersion_px", "confidence",
+    "session_id", "event_id",
+    "start_timestamp_sec", "end_timestamp_sec",
+    "duration_ms", "center_x", "center_y", "dispersion_px",
+    "num_frames", "confidence",
 ]
 
 
@@ -189,12 +216,14 @@ def _write_fixations(events: List[FixationEvent], path: Path) -> Path:
         for e in events:
             writer.writerow({
                 "session_id": e.session_id,
+                "event_id": e.event_id,
                 "start_timestamp_sec": _r4(e.start_timestamp_sec),
                 "end_timestamp_sec": _r4(e.end_timestamp_sec),
                 "duration_ms": _r2(e.duration_ms),
                 "center_x": _r4(e.center_x),
                 "center_y": _r4(e.center_y),
                 "dispersion_px": _r2(e.dispersion_px),
+                "num_frames": e.num_frames,
                 "confidence": _r4(e.confidence),
             })
     return path

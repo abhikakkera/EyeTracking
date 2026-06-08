@@ -83,6 +83,7 @@ class LiveOverlay:
 
         if not record.face_detected:
             self._text(out, "NO FACE DETECTED", (10, 30), scale=0.8, color=_C_BAD)
+            self._draw_distance_guidance(out, record)
             self._draw_stats(out, fps, record)
             return out
 
@@ -134,6 +135,9 @@ class LiveOverlay:
         if self._cfg.show_blink_indicator and record.blink_detected:
             self._text(out, "BLINK", (10, 60), scale=0.8, color=_C_BLINK, thickness=2)
 
+        # --- Camera distance guidance (v0.3) --------------------------------
+        self._draw_distance_guidance(out, record)
+
         # --- Statistics bar --------------------------------------------------
         self._draw_stats(out, fps, record)
 
@@ -171,6 +175,51 @@ class LiveOverlay:
             y = y0 + i * 18
             color = quality_color if "Conf" in line else _C_TEXT
             self._text(out, line, (10, y), scale=0.45, color=color)
+
+    def _draw_distance_guidance(
+        self,
+        out: np.ndarray,
+        record: FrameRecord,
+    ) -> None:
+        """
+        Draw a small camera-distance indicator in the top-right corner.
+        Only shown when status is not 'good' (or always when a message exists).
+        """
+        status  = record.camera_distance_status
+        message = record.distance_guidance_message
+        score   = record.camera_distance_score
+
+        if status == "good" and not message:
+            return
+
+        h, w = out.shape[:2]
+        _STATUS_COLOR = {
+            "good":      (50, 200,  50),
+            "too_close": (50,  50, 200),
+            "too_far":   (30, 140, 255),
+            "unknown":   (140, 140, 140),
+        }
+        _STATUS_LABEL = {
+            "good":      "✓ Good distance",
+            "too_close": "◀ Too close",
+            "too_far":   "▶ Move closer",
+            "unknown":   "Face not found",
+        }
+        color = _STATUS_COLOR.get(status, (140, 140, 140))
+        label = _STATUS_LABEL.get(status, status)
+
+        x = w - 220
+        y = 8
+        # Background pill
+        cv2.rectangle(out, (x - 4, y), (w - 4, y + 36), (20, 20, 20), -1)
+        # Status label
+        self._text(out, label, (x, y + 16), scale=0.48, color=color)
+        # Score bar
+        bar_w = 210
+        filled = int(bar_w * max(0.0, min(1.0, score)))
+        cv2.rectangle(out, (x, y + 24), (x + bar_w, y + 30), (60, 60, 60), -1)
+        if filled > 0:
+            cv2.rectangle(out, (x, y + 24), (x + filled, y + 30), color, -1)
 
     @staticmethod
     def _text(

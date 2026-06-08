@@ -106,11 +106,13 @@ def _write_events(session: SessionData, path: Path) -> Path:
         ],
         "saccades": [
             {
+                "event_id": e.event_id,
                 "start_sec": round(e.start_timestamp_sec, 4),
                 "end_sec": round(e.end_timestamp_sec, 4),
                 "duration_ms": round(e.duration_ms, 2),
                 "amplitude_px": round(e.amplitude_px, 2),
                 "peak_velocity_px_per_sec": round(e.peak_velocity_px_per_sec, 2),
+                "mean_velocity_px_per_sec": round(e.mean_velocity_px_per_sec, 2),
                 "direction_deg": round(e.direction_deg, 2),
                 "start": [round(e.start_x, 4), round(e.start_y, 4)],
                 "end": [round(e.end_x, 4), round(e.end_y, 4)],
@@ -119,11 +121,13 @@ def _write_events(session: SessionData, path: Path) -> Path:
         ],
         "fixations": [
             {
+                "event_id": e.event_id,
                 "start_sec": round(e.start_timestamp_sec, 4),
                 "end_sec": round(e.end_timestamp_sec, 4),
                 "duration_ms": round(e.duration_ms, 2),
                 "center": [round(e.center_x, 4), round(e.center_y, 4)],
                 "dispersion_px": round(e.dispersion_px, 2),
+                "num_frames": e.num_frames,
             }
             for e in session.fixations
         ],

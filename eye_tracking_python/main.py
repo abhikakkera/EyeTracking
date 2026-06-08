@@ -1,17 +1,23 @@
 """
-Eye Tracking System — CLI entry point.
+Eye Tracking System — CLI entry point — v0.3.
 
 Usage:
-    python main.py webcam               # live webcam tracking
-    python main.py video path/to/file   # offline video analysis
-    python main.py calibrate            # run 9-point calibration
-    python main.py pursuit              # smooth pursuit stimulus task
+    python main.py webcam                           # live webcam tracking
+    python main.py video path/to/file               # offline video analysis
+    python main.py calibrate                        # run 9-point calibration
+    python main.py task prosaccade                  # pro-saccade task
+    python main.py task antisaccade                 # anti-saccade task
+    python main.py task gap_overlap                 # gap-overlap task
+    python main.py task smooth_pursuit              # smooth pursuit task
+    python main.py task smooth_pursuit --pattern circular --cycles 6
 
 Press  Q  or  Esc  in the OpenCV window to stop.
 
 ⚠️  DISCLAIMER ⚠️
 This software is a research prototype for eye-tracking data collection.
-It does NOT diagnose, treat, or predict any medical condition.
+It does not diagnose, treat, predict, or screen for Parkinson's disease or any
+other medical condition. Clinical use would require validation, regulatory
+review, and healthcare professional oversight.
 """
 from __future__ import annotations
 
@@ -35,11 +41,11 @@ import numpy as np
 from config import CONFIG, SOFTWARE_VERSION
 from src.camera.webcam_stream import WebcamStream
 from src.camera.video_file_stream import VideoFileStream
+from src.camera.threaded_stream import ThreadedCameraStream
 from src.data.database import EyeTrackingDatabase
 from src.data.export_csv import export_session as export_csv
 from src.data.export_json import export_session as export_json
 from src.data.schema import TestType
-from src.detection.iris_detector import IrisDetector
 from src.tracking.calibration import CALIBRATION_9PT, CalibrationCollector, CalibrationProfile
 from src.tracking.eye_tracker import EyeTracker
 from src.utils.logging_utils import configure_logging, get_logger
@@ -65,13 +71,15 @@ def run_tracking(
     configure_logging(CONFIG.log_level)
     logger.info("Starting tracking  session=%s  type=%s", session_id, test_type.value)
 
+    # Wrap camera in a background thread so capture never blocks processing
+    camera = ThreadedCameraStream(camera)
+
     tracker = EyeTracker(CONFIG)
     overlay = LiveOverlay(CONFIG)
-    iris_detector = IrisDetector()
 
     camera_type = (
-        "webcam" if isinstance(camera, WebcamStream)
-        else f"video:{getattr(camera, '_path', 'unknown')}"
+        "webcam" if isinstance(camera._camera, WebcamStream)
+        else f"video:{getattr(camera._camera, '_path', 'unknown')}"
     )
 
     tracker.start_session(
@@ -85,16 +93,15 @@ def run_tracking(
     cv2.resizeWindow(_WINDOW, 960, 540)
 
     def on_frame(frame_data, record, fps):
-        # Gather optional data for the overlay
-        face = tracker._face_detector.detect(frame_data.image)
-        left_iris = iris_detector.detect_left(face)
-        right_iris = iris_detector.detect_right(face)
+        # Use the results cached by the most recent process_frame() call.
+        # IMPORTANT: do NOT call face_detector.detect() here — in VIDEO mode
+        # MediaPipe requires strictly increasing timestamps; re-calling with the
+        # same frame violates that constraint and corrupts state for future frames.
+        face = tracker._last_face
+        left_iris = tracker._last_left_iris
+        right_iris = tracker._last_right_iris
 
         face_bbox = (face.bbox_x, face.bbox_y, face.bbox_w, face.bbox_h) if face.detected else None
-        left_roi = (
-            (record.left_pupil_x - 30, record.left_pupil_y - 20, 60, 40)
-            if record.left_pupil_detected else None
-        )
 
         annotated = overlay.draw(
             frame_data.image,
@@ -330,6 +337,50 @@ def run_smooth_pursuit(
 
 
 # ---------------------------------------------------------------------------
+# Structured task runner (v0.3)
+# ---------------------------------------------------------------------------
+
+def _run_task(args) -> None:
+    """
+    Run a structured eye-movement task from the 'task' subcommand.
+    Applies any CLI overrides (--trials, --fullscreen, --pattern, --cycles)
+    on top of the config singleton before creating the task.
+    """
+    from src.tasks import make_task, TaskRunner
+
+    # Apply CLI overrides to a (shallow) config copy so globals are not mutated
+    import copy
+    cfg = copy.deepcopy(CONFIG)
+
+    if getattr(args, "trials", None) is not None:
+        cfg.task.num_trials = args.trials
+    if getattr(args, "fullscreen", False):
+        cfg.task.fullscreen = True
+    if getattr(args, "pattern", None) is not None:
+        cfg.task.pursuit_pattern = args.pattern
+    if getattr(args, "cycles", None) is not None:
+        cfg.task.pursuit_num_cycles = args.cycles
+
+    camera = WebcamStream(
+        device_index=cfg.camera.device_index,
+        width=cfg.camera.resolution[0],
+        height=cfg.camera.resolution[1],
+        target_fps=cfg.camera.target_fps,
+    )
+
+    out_dir = getattr(args, "out", None) or cfg.data.output_dir
+
+    task   = make_task(args.task_name, cfg)
+    runner = TaskRunner(cfg)
+    runner.run(
+        camera, task,
+        subject_id=args.subject,
+        out_dir=out_dir,
+        session_id=getattr(args, "session_id", None),
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -338,22 +389,56 @@ def build_parser() -> argparse.ArgumentParser:
         prog="eye_tracker",
         description=(
             f"Eye Tracking Research Prototype v{SOFTWARE_VERSION}\n"
-            "NOT a medical device. For research use only."
+            "⚠  NOT a medical device. Research use only."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = p.add_subparsers(dest="command", required=True)
 
+    # ---- webcam ----
     wc = sub.add_parser("webcam", help="Live webcam tracking")
     wc.add_argument("--subject", default="anonymous", help="Subject identifier")
 
+    # ---- video ----
     vf = sub.add_parser("video", help="Process a video file")
     vf.add_argument("file", help="Path to video file")
     vf.add_argument("--subject", default="anonymous")
 
+    # ---- calibrate ----
     sub.add_parser("calibrate", help="Run 9-point calibration")
 
-    pu = sub.add_parser("pursuit", help="Smooth pursuit stimulus task")
+    # ---- task (v0.3) ----
+    tk = sub.add_parser(
+        "task",
+        help="Structured eye-movement task protocol",
+        description=(
+            "Run a structured eye-movement task and save per-trial data.\n"
+            "Available tasks: prosaccade, antisaccade, gap_overlap, smooth_pursuit"
+        ),
+    )
+    tk.add_argument(
+        "task_name",
+        choices=["prosaccade", "antisaccade", "gap_overlap", "smooth_pursuit"],
+        help="Which task to run",
+    )
+    tk.add_argument("--subject", default="anonymous", help="Subject identifier")
+    tk.add_argument("--trials", type=int, default=None,
+                    help="Override number of trials (default: from config)")
+    tk.add_argument("--fullscreen", action="store_true",
+                    help="Run stimulus in fullscreen mode")
+    tk.add_argument("--pattern",
+                    choices=["horizontal", "vertical", "circular", "figure8"],
+                    default=None,
+                    help="Smooth pursuit pattern (smooth_pursuit task only)")
+    tk.add_argument("--cycles", type=int, default=None,
+                    help="Number of pursuit cycles (smooth_pursuit task only)")
+    tk.add_argument("--session-id", dest="session_id", default=None,
+                    help="Use a specific session id (set by the PDEYE backend)")
+    tk.add_argument("--out", default=None,
+                    help="Override output directory")
+
+    # ---- pursuit (legacy alias — kept for backward compat) ----
+    pu = sub.add_parser("pursuit", help="[Legacy] Smooth pursuit — use 'task smooth_pursuit'")
     pu.add_argument("--subject", default="anonymous")
 
     return p
@@ -388,8 +473,22 @@ def main() -> None:
     elif args.command == "calibrate":
         run_calibration()
 
+    elif args.command == "task":
+        _run_task(args)
+
     elif args.command == "pursuit":
-        run_smooth_pursuit(subject_id=args.subject)
+        # Legacy alias: forward to task smooth_pursuit
+        print("Note: 'pursuit' is a legacy alias. Use 'task smooth_pursuit' instead.")
+        camera = WebcamStream(
+            device_index=CONFIG.camera.device_index,
+            width=CONFIG.camera.resolution[0],
+            height=CONFIG.camera.resolution[1],
+            target_fps=CONFIG.camera.target_fps,
+        )
+        from src.tasks import make_task, TaskRunner
+        task   = make_task("smooth_pursuit", CONFIG)
+        runner = TaskRunner(CONFIG)
+        runner.run(camera, task, subject_id=args.subject)
 
 
 if __name__ == "__main__":
