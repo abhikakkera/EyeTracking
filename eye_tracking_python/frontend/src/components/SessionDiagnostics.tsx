@@ -1,5 +1,5 @@
 import type { SessionDiagnostics as Diag } from "@/lib/types";
-import { formatCount, formatConfidence, formatPercent } from "@/lib/format";
+import { formatCount, formatConfidence, formatNumber, formatPercent } from "@/lib/format";
 
 // Collapsed-by-default developer panel. Not shown to participants unless they
 // expand it. Useful for debugging why a session was unclear.
@@ -16,6 +16,7 @@ export default function SessionDiagnostics({ d }: { d?: Diag | null }) {
       "Usable eye-tracking frames",
       `${formatCount(d.usable_eye_tracking_frames)} (${formatPercent(d.usable_eye_tracking_percent)})`,
     ],
+    ["Frames per round", formatNumber(d.frames_per_trial, 1)],
     ["Gaze samples available", formatCount(d.gaze_samples_available)],
     ["Average confidence", formatConfidence(d.average_confidence)],
     ["Task events received", formatCount(d.task_events_received)],

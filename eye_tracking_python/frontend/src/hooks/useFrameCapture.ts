@@ -27,31 +27,37 @@ export interface FrameCaptureOptions {
  * - Backpressure: never more than one request in flight; ticks are dropped
  *   while the backend is busy (keeps the UI smooth — no freezing).
  * - JPEG compression + capped resolution to keep uploads small.
+ *
+ * IMPORTANT: the capture loop reads every option through a `latest` ref, so it
+ * always uses the CURRENT getContext()/callbacks. Without this, the interval
+ * would freeze the closure from the render when it started — which made every
+ * frame get tagged with the "waiting" context even after the task began.
  */
 export function useFrameCapture(opts: FrameCaptureOptions): void {
   const inFlight = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  useEffect(() => {
-    const {
-      videoRef, sessionId, enabled, getContext, getTaskStartMs,
-      fps = 12, jpegQuality = 70, maxWidth = 640, maxHeight = 480,
-      timeoutMs = 4000, onResult, onUpload, onSlow,
-    } = opts;
+  // Always-current snapshot of the options for the interval to read.
+  const latest = useRef(opts);
+  latest.current = opts;
 
-    if (!enabled || !sessionId) return;
+  useEffect(() => {
+    if (!opts.enabled || !opts.sessionId) return;
 
     if (!canvasRef.current) canvasRef.current = document.createElement("canvas");
-    const intervalMs = 1000 / Math.max(1, fps);
+    const intervalMs = 1000 / Math.max(1, opts.fps ?? 12);
     let stopped = false;
 
     async function captureOnce() {
-      if (stopped || inFlight.current) return;
-      const video = videoRef.current;
+      const o = latest.current;
+      if (stopped || inFlight.current || !o.sessionId) return;
+
+      const video = o.videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2) return;
 
-      // Compute capped output size, preserving aspect ratio.
+      const maxWidth = o.maxWidth ?? 640;
+      const maxHeight = o.maxHeight ?? 480;
       const vw = video.videoWidth || maxWidth;
       const vh = video.videoHeight || maxHeight;
       const scale = Math.min(maxWidth / vw, maxHeight / vh, 1);
@@ -69,24 +75,25 @@ export function useFrameCapture(opts: FrameCaptureOptions): void {
       ctx.drawImage(video, 0, 0, w, h);
       ctx.restore();
 
+      const quality = (o.jpegQuality ?? 70) / 100;
       const blob: Blob | null = await new Promise((resolve) =>
-        canvas.toBlob((b) => resolve(b), "image/jpeg", jpegQuality / 100),
+        canvas.toBlob((b) => resolve(b), "image/jpeg", quality),
       );
       if (!blob || stopped) return;
 
       const meta = {
-        ...getContext(),
+        ...o.getContext(),
         browser_timestamp_ms: performance.now(),
-        task_start_timestamp_ms: getTaskStartMs(),
+        task_start_timestamp_ms: o.getTaskStartMs(),
       };
 
       inFlight.current = true;
       try {
-        const result = await api.sendFrame(sessionId!, blob, meta, timeoutMs);
-        onUpload?.();
-        onResult?.(result);
+        const result = await api.sendFrame(o.sessionId, blob, meta, o.timeoutMs ?? 4000);
+        o.onUpload?.();
+        o.onResult?.(result);
       } catch {
-        onSlow?.();
+        o.onSlow?.();
       } finally {
         inFlight.current = false;
       }
@@ -97,6 +104,7 @@ export function useFrameCapture(opts: FrameCaptureOptions): void {
       stopped = true;
       clearInterval(timer);
     };
+    // Re-create the loop only when these change; everything else is read live.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opts.sessionId, opts.enabled, opts.fps]);
 }

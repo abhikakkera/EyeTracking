@@ -192,12 +192,25 @@ def parse_session(
         "missing_gaze_reason_counts": fd["missing_gaze_reason_counts"],
         "main_unclear_reason": fd["main_unclear_reason"],
     }
+    # Coverage: how many camera frames landed per round. Too few means the camera
+    # wasn't streaming during the activity (the usable% can still be ~100 of a
+    # tiny sample), which is the real reason responses can't be measured.
+    frames_per_trial = round(total_frames / total_trials, 1) if total_trials else None
+    diagnostics["frames_per_trial"] = frames_per_trial
+
     if extra_diagnostics:
         diagnostics.update({k: v for k, v in extra_diagnostics.items() if v is not None})
 
     notes = None
     if valid_trials == 0 and total_trials > 0:
-        notes = "No clear eye-movement responses were detected in this session."
+        if frames_per_trial is not None and frames_per_trial < 3:
+            notes = (
+                f"Very few camera frames were recorded during the activity "
+                f"(about {frames_per_trial} per round), so eye movements could not be "
+                f"measured. Make sure the camera stays on for the whole activity."
+            )
+        else:
+            notes = "No clear eye-movement responses were detected in this session."
 
     summary: Dict[str, Any] = {
         "session_id": session_id,

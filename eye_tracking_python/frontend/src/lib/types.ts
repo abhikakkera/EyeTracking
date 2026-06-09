@@ -57,6 +57,7 @@ export interface SessionDiagnostics {
   frames_with_pupil_or_gaze_detected?: number | null;
   usable_eye_tracking_frames?: number | null;
   usable_eye_tracking_percent?: number | null;
+  frames_per_trial?: number | null;
   gaze_samples_available?: number | null;
   average_confidence?: number | null;
   total_trials?: number | null;

@@ -35,7 +35,7 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
   const activity = activityBySlug(params.taskType);
   const taskType = params.taskType as TaskType;
 
-  const { videoRef, ready, error: camError } = useWebcam(true);
+  const { videoRef, stream, ready, error: camError } = useWebcam(true);
   const tracking = useTrackingStream();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -78,6 +78,12 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
     onComplete: handleComplete,
   });
 
+  // Stable handle to the runner. The runner object identity changes on every
+  // render (and frame uploads re-render ~12×/s), so effects must NOT depend on
+  // it directly or their timers get reset constantly.
+  const runnerRef = useRef(runner);
+  runnerRef.current = runner;
+
   // ---- Start the web session once the camera is live ----
   useEffect(() => {
     if (!activity || !ready || startedSession.current) return;
@@ -117,16 +123,20 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
   });
 
   // ---- Countdown ----
+  // Depends ONLY on phase+count. The runner is read via runnerRef so that the
+  // frequent frame-driven re-renders don't keep resetting the 800ms timer
+  // (which previously left the countdown stuck on "3").
   useEffect(() => {
     if (phase !== "countdown") return;
     if (count <= 0) {
       setPhase("running");
-      runner.start();
+      runnerRef.current.start();
       return;
     }
     const t = setTimeout(() => setCount((c) => c - 1), 800);
     return () => clearTimeout(t);
-  }, [phase, count, runner]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, count]);
 
   function beginCountdown() {
     setCount(3);
@@ -210,92 +220,116 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
     },
   ];
 
-  // ---- Setup phase ----
-  if (phase === "setup") {
-    return (
-      <section className="section">
-        <div className="container" style={{ maxWidth: 980 }}>
-          <span className="eyebrow">Get ready</span>
-          <h1 style={{ fontSize: "2rem", marginBottom: 6 }}>{activity.name}</h1>
-          <p className="muted">{activity.technical}</p>
+  // The capture <video> stays mounted across setup → countdown → running so
+  // useFrameCapture never loses its source mid-activity. It is hidden off-screen;
+  // the setup preview displays the SAME stream in its own element.
+  const captureVideo = (
+    <video
+      ref={videoRef}
+      autoPlay
+      muted
+      playsInline
+      aria-hidden
+      style={{
+        position: "fixed",
+        left: -99999,
+        top: 0,
+        width: 2,
+        height: 2,
+        opacity: 0,
+        pointerEvents: "none",
+      }}
+    />
+  );
 
-          <div className="grid grid-2" style={{ alignItems: "start", marginTop: 12 }}>
-            <div>
-              <WebcamPreview videoRef={videoRef} error={camError} />
-              <div style={{ marginTop: 12 }}>
-                <LiveTrackingStatus result={tracking.latest} />
-              </div>
-            </div>
-
-            <div className="grid" style={{ gap: 18 }}>
-              <TaskInstructions taskType={taskType} />
-              <CameraSetupGuide items={guideItems} />
-              <div className="note small">
-                Camera frames are processed locally by the PDEYE backend in this
-                prototype. Raw video is not saved unless debug recording is
-                enabled.
-              </div>
-              <div className="row">
-                <button
-                  className="btn btn-primary btn-lg"
-                  onClick={beginCountdown}
-                  disabled={!sessionId || !ready}
-                >
-                  Start activity
-                </button>
-                <Link className="btn btn-ghost btn-lg" href="/test">Back</Link>
-              </div>
-              <label className="small muted" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
-                Show technical details
-              </label>
-              {debug && <LiveTrackingStatus result={tracking.latest} debug uploadFps={tracking.uploadFps} />}
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <DisclaimerBox compact />
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  // ---- Countdown / running / completing: full-screen activity overlay ----
   return (
-    <div className="activity-overlay" ref={containerRef}>
-      <TaskCanvas canvasRef={canvasRef}>
-        {phase === "countdown" && (
-          <div className="countdown">
-            <div className="countdown-num">{count > 0 ? count : "Go"}</div>
-            <TaskInstructions taskType={taskType} compact />
-          </div>
-        )}
+    <>
+      {captureVideo}
 
-        {phase === "completing" && (
-          <div className="countdown">
-            <div className="pulse"><div className="eye" /></div>
-            <p className="muted">Saving your results…</p>
-          </div>
-        )}
-      </TaskCanvas>
+      {phase === "setup" ? (
+        // ---- Setup phase ----
+        <section className="section">
+          <div className="container" style={{ maxWidth: 980 }}>
+            <span className="eyebrow">Get ready</span>
+            <h1 style={{ fontSize: "2rem", marginBottom: 6 }}>{activity.name}</h1>
+            <p className="muted">{activity.technical}</p>
 
-      {(phase === "running" || phase === "countdown") && (
-        <>
-          <div className="activity-top">
-            <TaskProgress current={runner.state.trialNumber} total={runner.state.totalRounds} />
-            <button className="btn btn-ghost activity-exit" onClick={exit}>Exit</button>
+            <div className="grid grid-2" style={{ alignItems: "start", marginTop: 12 }}>
+              <div>
+                <WebcamPreview stream={stream} error={camError} />
+                <div style={{ marginTop: 12 }}>
+                  <LiveTrackingStatus result={tracking.latest} />
+                </div>
+              </div>
+
+              <div className="grid" style={{ gap: 18 }}>
+                <TaskInstructions taskType={taskType} />
+                <CameraSetupGuide items={guideItems} />
+                <div className="note small">
+                  Camera frames are processed locally by the PDEYE backend in this
+                  prototype. Raw video is not saved unless debug recording is
+                  enabled.
+                </div>
+                <div className="row">
+                  <button
+                    className="btn btn-primary btn-lg"
+                    onClick={beginCountdown}
+                    disabled={!sessionId || !ready}
+                  >
+                    Start activity
+                  </button>
+                  <Link className="btn btn-ghost btn-lg" href="/test">Back</Link>
+                </div>
+                <label className="small muted" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
+                  Show technical details
+                </label>
+                {debug && <LiveTrackingStatus result={tracking.latest} debug uploadFps={tracking.uploadFps} />}
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <DisclaimerBox compact />
+            </div>
           </div>
-          <div className="activity-bottom">
-            <LiveTrackingStatus
-              result={tracking.latest}
-              subtle
-              debug={debug}
-              uploadFps={tracking.uploadFps}
-            />
-          </div>
-        </>
+        </section>
+      ) : (
+        // ---- Countdown / running / completing: full-screen activity overlay ----
+        <div className="activity-overlay" ref={containerRef}>
+          <TaskCanvas canvasRef={canvasRef}>
+            {phase === "countdown" && (
+              <div className="countdown">
+                <div className="countdown-num">{count > 0 ? count : "Go"}</div>
+                <TaskInstructions taskType={taskType} compact />
+              </div>
+            )}
+
+            {phase === "completing" && (
+              <div className="countdown">
+                <div className="pulse"><div className="eye" /></div>
+                <p className="muted">Saving your results…</p>
+              </div>
+            )}
+          </TaskCanvas>
+
+          {(phase === "running" || phase === "countdown") && (
+            <>
+              <div className="activity-top">
+                <TaskProgress current={runner.state.trialNumber} total={runner.state.totalRounds} />
+                <button className="btn btn-ghost activity-exit" onClick={exit}>Exit</button>
+              </div>
+              <div className="activity-bottom">
+                <LiveTrackingStatus
+                  result={tracking.latest}
+                  subtle
+                  debug={debug}
+                  uploadFps={tracking.uploadFps}
+                />
+              </div>
+            </>
+          )}
+        </div>
       )}
-    </div>
+    </>
   );
 }
