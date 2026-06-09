@@ -1,73 +1,75 @@
-import type { SessionSummary } from "@/lib/types";
+import type { SessionSummary, TaskMetrics } from "@/lib/types";
 import QualityBadge from "@/components/QualityBadge";
 import DisclaimerBox from "@/components/DisclaimerBox";
+import {
+  formatCount,
+  formatGain,
+  formatMilliseconds,
+  formatMsDelta,
+  formatPercent,
+  formatPx,
+  formatSpeed,
+} from "@/lib/format";
 
-// Friendly labels for known per-task metric keys.
-const LABELS: Record<string, string> = {
-  // pro-saccade
-  average_response_time_ms: "Average response time",
-  fastest_response_ms: "Fastest response",
-  successful_clear_rounds: "Successful clear rounds",
-  unclear_rounds: "Rounds with unclear tracking",
-  direction_accuracy_percent: "Correct direction",
-  left_accuracy_percent: "Accuracy (left targets)",
-  right_accuracy_percent: "Accuracy (right targets)",
-  response_rate_percent: "Rounds with a response",
-  // anti-saccade
-  correct_direction_rounds: "Correct-direction rounds",
-  self_corrections: "Self-corrections",
-  error_rate_percent: "Looked toward the dot first",
-  correction_rate_percent: "Self-correction rate",
-  // gap-overlap
-  average_response_time_gap_ms: "Avg response — gap",
-  average_response_time_overlap_ms: "Avg response — overlap",
-  gap_effect_ms: "Gap effect",
-  gap_valid_rounds: "Valid gap rounds",
-  overlap_valid_rounds: "Valid overlap rounds",
-  gap_trials: "Gap rounds",
-  overlap_trials: "Overlap rounds",
-  // smooth pursuit
-  mean_pursuit_gain: "Tracking closeness (gain)",
-  mean_position_error_px: "Average tracking difference",
-  time_on_target_percent: "Time tracking was clear",
-  total_catch_up_saccades: "Catch-up eye movements",
-};
+type Row = { label: string; value: string };
 
-function labelFor(key: string): string {
-  return LABELS[key] ?? key.replace(/_/g, " ");
+// Build ONLY the rows that are meaningful for each task type.
+function rowsForTask(task: string, m: TaskMetrics): Row[] {
+  switch (task) {
+    case "prosaccade":
+      return [
+        { label: "Average response time", value: formatMilliseconds(m.average_response_time_ms) },
+        { label: "Fastest response", value: formatMilliseconds(m.fastest_response_ms) },
+        { label: "Successful clear rounds", value: formatCount(m.successful_clear_rounds) },
+        { label: "Rounds with unclear tracking", value: formatCount(m.unclear_rounds) },
+        { label: "Rounds with a response", value: formatPercent(m.rounds_with_response_percent) },
+        { label: "Average eye-movement speed", value: formatSpeed(m.average_eye_movement_speed_px_per_sec) },
+      ];
+    case "antisaccade":
+      return [
+        { label: "Correct-direction rounds", value: formatCount(m.correct_direction_rounds) },
+        { label: "Average response time", value: formatMilliseconds(m.average_response_time_ms) },
+        { label: "Self-corrections", value: formatCount(m.self_corrections) },
+        { label: "Looked toward the dot first", value: formatPercent(m.looked_toward_first_percent) },
+        { label: "Rounds with unclear tracking", value: formatCount(m.unclear_rounds) },
+      ];
+    case "gap_overlap":
+      return [
+        { label: "Average response — gap", value: formatMilliseconds(m.average_response_time_gap_ms) },
+        { label: "Average response — overlap", value: formatMilliseconds(m.average_response_time_overlap_ms) },
+        { label: "Gap effect", value: formatMsDelta(m.gap_effect_ms) },
+        { label: "Valid gap rounds", value: formatCount(m.valid_gap_rounds) },
+        { label: "Valid overlap rounds", value: formatCount(m.valid_overlap_rounds) },
+      ];
+    case "smooth_pursuit":
+      return [
+        { label: "Tracking closeness (gain)", value: formatGain(m.tracking_gain) },
+        { label: "Average tracking difference", value: formatPx(m.average_tracking_difference_px) },
+        { label: "Time tracking was clear", value: formatPercent(m.time_tracking_clear_percent) },
+        { label: "Catch-up eye movements", value: formatCount(m.catch_up_eye_movements) },
+      ];
+    default:
+      return [];
+  }
 }
 
-function valueFor(key: string, value: number | string | null): string {
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "string") return value;
-  if (key.endsWith("_percent")) return `${value}%`;
-  if (key.endsWith("_ms")) return `${value} ms`;
-  if (key.endsWith("_px")) return `${value} px`;
-  if (key.includes("gain")) return value.toFixed(2);
-  return `${value}`;
-}
-
-// A short, research-only explanation shown under certain activities.
 function explanation(task: string): string | null {
   switch (task) {
     case "gap_overlap":
       return (
         "In the gap condition the center dot disappears just before the new dot " +
         "appears; in the overlap condition it stays on screen. Comparing the two " +
-        "shows how the timing of the center dot affects reaction speed. This is a " +
-        "research measure only."
+        "shows how the timing of the center dot affects reaction speed. Research measure only."
       );
     case "smooth_pursuit":
       return (
         "“Gain” compares how fast your eyes moved to how fast the dot moved. A value " +
-        "near 1.0 means your eyes closely followed the dot. This is a research " +
-        "measure only."
+        "near 1.0 means your eyes closely followed the dot. Research measure only."
       );
     case "antisaccade":
       return (
         "This activity asks you to look away from a sudden dot. Looking toward it " +
-        "first is common and is simply recorded as part of the data. This is a " +
-        "research measure only."
+        "first is common and is simply recorded as part of the data. Research measure only."
       );
     default:
       return null;
@@ -85,7 +87,7 @@ function fmtDate(iso?: string | null): string {
 
 export default function ResultsSummary({ s }: { s: SessionSummary }) {
   const isPursuit = s.technical_task_name === "smooth_pursuit";
-  const metricEntries = Object.entries(s.task_metrics || {});
+  const rows = rowsForTask(String(s.technical_task_name), s.task_metrics || {});
   const note = explanation(String(s.technical_task_name));
 
   return (
@@ -102,48 +104,49 @@ export default function ResultsSummary({ s }: { s: SessionSummary }) {
         <QualityBadge label={s.tracking_quality_label} />
       </div>
 
+      {/* Honest banner when the camera couldn't capture clear eye movements */}
+      {s.notes && (
+        <div className="note-warn">
+          <strong>{s.notes}</strong>
+          <div className="muted small mt-1">
+            This usually means the camera couldn’t see your eyes clearly enough. Try the
+            suggestions below and run the activity again.
+          </div>
+        </div>
+      )}
+
       {/* Stat tiles */}
       <div className="stats">
         <div className="stat">
           <div className="k">Rounds completed</div>
-          <div className="v">{s.rounds_completed ?? "—"}</div>
+          <div className="v">{formatCount(s.rounds_completed)}</div>
         </div>
         <div className="stat">
           <div className="k">Usable eye-tracking data</div>
-          <div className="v">
-            {s.usable_data_percent ?? "—"}
-            <span className="u">%</span>
-          </div>
+          <div className="v">{formatPercent(s.usable_data_percent)}</div>
         </div>
         <div className="stat">
           <div className="k">Blinks</div>
-          <div className="v">{s.blink_count ?? "—"}</div>
+          <div className="v">{formatCount(s.blink_count)}</div>
         </div>
         <div className="stat">
-          <div className="k">
-            {isPursuit ? "Tracking closeness" : "Average response"}
-          </div>
+          <div className="k">{isPursuit ? "Tracking closeness" : "Average response"}</div>
           <div className="v">
             {isPursuit
-              ? (s.task_metrics?.mean_pursuit_gain as number | undefined)?.toFixed?.(
-                  2,
-                ) ?? "—"
-              : s.average_response_time_ms ?? "—"}
-            {!isPursuit && s.average_response_time_ms != null && (
-              <span className="u"> ms</span>
-            )}
+              ? formatGain(s.task_metrics?.tracking_gain)
+              : formatMilliseconds(s.average_response_time_ms)}
           </div>
         </div>
       </div>
 
-      {/* Activity details */}
+      {/* Activity details — task-appropriate rows only */}
       <div className="card">
         <h3 className="mb-2">Activity details</h3>
-        {metricEntries.length ? (
-          metricEntries.map(([k, v]) => (
-            <div className="metric-row" key={k}>
-              <span className="k">{labelFor(k)}</span>
-              <span className="v">{valueFor(k, v)}</span>
+        {rows.length ? (
+          rows.map((r) => (
+            <div className="metric-row" key={r.label}>
+              <span className="k">{r.label}</span>
+              <span className="v">{r.value}</span>
             </div>
           ))
         ) : (

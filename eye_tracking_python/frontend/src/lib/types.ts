@@ -40,6 +40,36 @@ export interface TestStatusResponse {
 // A flexible bag of per-task metrics (shape varies by task type).
 export type TaskMetrics = Record<string, number | string | null>;
 
+export interface TrialQuality {
+  trial_id?: string;
+  trial_number?: number | null;
+  trial_quality?: "clear" | "unclear" | "bad" | string;
+  unclear_reason?: string | null;
+  tracking_frames_in_trial?: number | null;
+  usable_tracking_frames_in_trial?: number | null;
+}
+
+export interface SessionDiagnostics {
+  total_frames_received?: number | null;
+  total_frames_processed?: number | null;
+  frames_with_face_detected?: number | null;
+  frames_with_eye_detected?: number | null;
+  frames_with_pupil_or_gaze_detected?: number | null;
+  usable_eye_tracking_frames?: number | null;
+  usable_eye_tracking_percent?: number | null;
+  gaze_samples_available?: number | null;
+  average_confidence?: number | null;
+  total_trials?: number | null;
+  valid_trials?: number | null;
+  unclear_trials?: number | null;
+  bad_trials?: number | null;
+  task_events_received?: number | null;
+  target_onset_events_received?: number | null;
+  missing_gaze_reason_counts?: Record<string, number>;
+  main_unclear_reason?: string | null;
+  trials_quality?: TrialQuality[];
+}
+
 export interface SessionSummary {
   session_id: string;
   technical_task_name: TaskType | string;
@@ -56,6 +86,8 @@ export interface SessionSummary {
   rounds_completed?: number | null;
   average_response_time_ms?: number | null;
   task_metrics: TaskMetrics;
+  diagnostics?: SessionDiagnostics | null;
+  notes?: string | null;
   recommendations: string[];
   exports: Record<string, string>;
   disclaimer: string;

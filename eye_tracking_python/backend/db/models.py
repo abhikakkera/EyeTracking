@@ -61,6 +61,10 @@ class SessionSummary(BaseModel):
     task_metrics: Dict[str, Any] = {}
     recommendations: List[str] = []
     exports: Dict[str, str] = {}
+    # v0.5: separates tracking quality from task performance, and surfaces
+    # frame/trial counts for the developer diagnostics panel.
+    diagnostics: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
     disclaimer: str
 
 

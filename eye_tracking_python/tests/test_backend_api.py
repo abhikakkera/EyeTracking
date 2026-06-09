@@ -76,9 +76,26 @@ def _write_min_session(sessions: Path, sid: str, task: str = "prosaccade") -> No
     }))
     (sessions / f"{sid}_metadata.json").write_text(json.dumps({
         "session_id": sid,
-        "summary": {"total_frames": 900, "good_frames": 760, "good_frame_ratio": 0.84,
+        "summary": {"total_frames": 100, "good_frames": 84, "good_frame_ratio": 0.84,
                     "blink_count": 7},
     }))
+    # Real frames.csv so the strict usable-data calc has data:
+    # 84 fully-usable frames, 16 face-only (no pupil, low confidence).
+    header = ("frame_number,face_detected,left_eye_detected,right_eye_detected,"
+              "left_pupil_detected,right_pupil_detected,blink_detected,"
+              "frame_quality,confidence_score")
+    rows = [header]
+    for i in range(100):
+        if i < 84:
+            rows.append(f"{i},1,1,1,1,1,0,good,0.9")
+        else:
+            rows.append(f"{i},1,1,1,0,0,0,questionable,0.2")
+    (sessions / f"{sid}_frames.csv").write_text("\n".join(rows) + "\n")
+    # 10 trials, 8 with a detected response.
+    trial_rows = ["trial_number,response_detected"]
+    for i in range(10):
+        trial_rows.append(f"{i + 1},{1 if i < 8 else 0}")
+    (sessions / f"{sid}_trials.csv").write_text("\n".join(trial_rows) + "\n")
 
 
 # ---------------------------------------------------------------------------

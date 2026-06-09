@@ -81,21 +81,40 @@ def save_parsed(summary: Dict[str, Any]) -> Dict[str, Any]:
 def get_summary(session_id: str) -> Optional[Dict[str, Any]]:
     """
     Return the full frontend summary for a session.
-    Prefers stored summary_json; falls back to parsing files on disk.
+
+    The exported files are the source of truth, so we RE-PARSE from disk
+    whenever they exist (this makes parser/quality fixes apply to sessions that
+    were recorded before the fix). The stored JSON is only used as a fallback
+    when the files are gone, and to preserve web-only event diagnostics that
+    cannot be recomputed from files.
     """
     ensure_db()
     row = database.get_session(session_id)
+    stored: Optional[Dict[str, Any]] = None
     if row and row.get("summary_json"):
         try:
-            return json.loads(row["summary_json"])
+            stored = json.loads(row["summary_json"])
         except Exception:  # noqa: BLE001
-            pass
-    # Fall back to live parse (and store it)
+            stored = None
+
     try:
-        summary = result_parser.parse_session(session_id)
+        fresh = result_parser.parse_session(session_id)
     except result_parser.SessionNotFound:
-        return None
-    return save_parsed(summary)
+        return stored  # files removed — return whatever we cached, if anything
+
+    # Preserve web-only diagnostics (event counts, per-trial quality) that the
+    # file-based parser cannot recompute.
+    if (stored and isinstance(stored.get("diagnostics"), dict)
+            and isinstance(fresh.get("diagnostics"), dict)):
+        for k in ("task_events_received", "target_onset_events_received",
+                  "bad_trials", "trials_quality"):
+            v = stored["diagnostics"].get(k)
+            if v is not None and fresh["diagnostics"].get(k) in (None, 0):
+                fresh["diagnostics"][k] = v
+        if stored.get("mode"):
+            fresh["mode"] = stored["mode"]
+
+    return save_parsed(fresh)
 
 
 def list_summaries(limit: int = 100) -> List[Dict[str, Any]]:

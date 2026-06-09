@@ -240,14 +240,16 @@ class TaskRunner:
         print(f"  Session:   {session_id}")
         print(f"  Trials:    {len(trials)}/{task.num_trials}")
         print(f"  Frames:    {meta.total_frames}")
-        if "response_rate" in analysis:
+        if analysis.get("response_rate") is not None:
             print(f"  Responses: {analysis.get('response_count', 0)}"
                   f"  ({analysis['response_rate']*100:.0f}%)")
-        if "direction_accuracy" in analysis:
+        if analysis.get("direction_accuracy") is not None:
             print(f"  Accuracy:  {analysis['direction_accuracy']*100:.0f}%")
-        if "mean_latency_ms" in analysis:
+        if analysis.get("mean_latency_ms") is not None:
             print(f"  Mean RT:   {analysis['mean_latency_ms']:.0f} ms")
-        if "mean_pursuit_gain" in analysis:
+        elif analysis.get("response_count") == 0 and "total_trials" in analysis:
+            print("  Mean RT:   N/A (no clear responses detected)")
+        if analysis.get("mean_pursuit_gain") is not None:
             print(f"  Pursuit gain: {analysis['mean_pursuit_gain']:.3f}")
         print(f"  Output:    {out_path}/")
         print("─────────────────────────────────────────────────────")

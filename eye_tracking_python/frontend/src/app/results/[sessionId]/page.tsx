@@ -5,6 +5,7 @@ import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
 import type { SessionSummary } from "@/lib/types";
 import ResultsSummary from "@/components/ResultsSummary";
+import SessionDiagnostics from "@/components/SessionDiagnostics";
 
 const EXPORT_KINDS: { kind: string; label: string }[] = [
   { kind: "trials", label: "Trial data (CSV)" },
@@ -113,6 +114,9 @@ export default function ResultDetailPage({
           </div>
           {folderMsg && <div className="note small mt-2">{folderMsg}</div>}
         </div>
+
+        {/* Collapsed developer diagnostics */}
+        <SessionDiagnostics d={summary.diagnostics} />
 
         <div className="row mt-3">
           <Link className="btn btn-primary" href="/test">

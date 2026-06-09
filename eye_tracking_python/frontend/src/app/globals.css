@@ -345,3 +345,34 @@ table.tbl tr:hover td { background: var(--bg-softer); }
   .nav-links { display: none; }
   .chart .row { grid-template-columns: 96px 1fr 46px; }
 }
+
+/* ---------- Results: "not enough data" banner + dev diagnostics ---------- */
+.note-warn {
+  background: #fff8e6;
+  border: 1px solid #f0dca0;
+  border-left: 4px solid #e6a817;
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  color: #6b531a;
+}
+.note-warn strong { color: #5a4413; }
+
+details.diag > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--blue-700);
+  list-style: none;
+  user-select: none;
+}
+details.diag > summary::-webkit-details-marker { display: none; }
+details.diag > summary::before { content: "▸ "; color: #6b8fe0; }
+details.diag[open] > summary::before { content: "▾ "; }
+.diag-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px 24px; }
+@media (max-width: 720px) { .diag-grid { grid-template-columns: 1fr; } }
+.diag-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 5px 0; border-bottom: 1px solid #eef1f6; font-size: .88rem;
+}
+.diag-row .k { color: #5b6577; }
+.diag-row .v { color: #0b1320; font-weight: 600; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

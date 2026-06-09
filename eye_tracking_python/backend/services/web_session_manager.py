@@ -274,16 +274,34 @@ class WebSessionManager:
             # 4. Spec-named extra exports (kept alongside the canonical files)
             _write_json(out / f"{session_id}_task_config.json", _serializable(sess.task_config))
 
-            # 5. Parse into the friendly summary + persist + summary_report.json
-            summary = result_parser.parse_session(session_id)
+            # 5. Event-/frame-level diagnostics from the in-memory web session
+            extra_diag = _web_diagnostics(sess, trials)
+
+            # 6. Parse into the friendly summary + persist + summary_report.json
+            summary = result_parser.parse_session(session_id, extra_diagnostics=extra_diag)
             summary["mode"] = "web"
             _write_json(out / f"{session_id}_summary_report.json", summary)
             session_store.save_parsed(summary)
 
             sess.status = "completed"
             sess.summary = summary
-            logger.info("Web session completed: %s (%d frames, %d trials)",
-                        session_id, sess.frame_count, len(trials))
+
+            # 7. Completion logging (makes low-quality sessions easy to debug)
+            d = summary.get("diagnostics", {})
+            logger.info(
+                "Web session complete: id=%s task=%s frames=%d usable=%s%% "
+                "trials=%s valid=%s unclear=%s conf=%s label=%s",
+                session_id, sess.task_type, sess.frame_count,
+                d.get("usable_eye_tracking_percent"),
+                d.get("total_trials"), d.get("valid_trials"), d.get("unclear_trials"),
+                d.get("average_confidence"), summary.get("tracking_quality_label"),
+            )
+            if summary.get("tracking_quality_label") == "Needs better camera setup":
+                logger.info(
+                    "  low quality: valid_trials=%s usable%%=%s main_reason=%s",
+                    d.get("valid_trials"), d.get("usable_eye_tracking_percent"),
+                    d.get("main_unclear_reason"),
+                )
             return summary
 
     def cancel(self, session_id: str) -> Dict[str, Any]:
@@ -333,6 +351,55 @@ def _serializable(d: Dict[str, Any]) -> Dict[str, Any]:
 
 def _write_json(path: Path, doc: Dict[str, Any]) -> None:
     path.write_text(json.dumps(doc, indent=2, default=str))
+
+
+def _web_diagnostics(sess: "WebSession", trials: list) -> Dict[str, Any]:
+    """
+    Event- and frame-level diagnostics computed from the in-memory web session.
+    Augments the file-derived diagnostics in result_parser.
+    """
+    events = sess.events
+    target_onsets = sum(1 for e in events if e.get("type") == "target_shown")
+
+    # Per-trial usable-frame counts (face + not blink + ok quality + confidence)
+    usable_by_trial: Dict[str, int] = {}
+    total_by_trial: Dict[str, int] = {}
+    for f in sess.frames:
+        total_by_trial[f.trial_id] = total_by_trial.get(f.trial_id, 0) + 1
+        if (f.face_detected and not f.blink and f.frame_quality != "bad"
+                and f.confidence >= 0.40):
+            usable_by_trial[f.trial_id] = usable_by_trial.get(f.trial_id, 0) + 1
+
+    bad = 0
+    trials_quality = []
+    for t in trials:
+        tid = getattr(t, "trial_id", "")
+        usable = usable_by_trial.get(tid, 0)
+        nframes = total_by_trial.get(tid, 0)
+        responded = bool(getattr(t, "response_detected", False))
+        if usable == 0:
+            quality, reason = "bad", "insufficient_tracking"
+            bad += 1
+        elif responded:
+            quality, reason = "clear", None
+        else:
+            quality, reason = "unclear", "no_gaze_response"
+        trials_quality.append({
+            "trial_id": tid,
+            "trial_number": getattr(t, "trial_number", None),
+            "trial_quality": quality,
+            "unclear_reason": reason,
+            "tracking_frames_in_trial": nframes,
+            "usable_tracking_frames_in_trial": usable,
+        })
+
+    return {
+        "total_frames_received": sess.frame_count,
+        "task_events_received": len(events),
+        "target_onset_events_received": target_onsets,
+        "bad_trials": bad,
+        "trials_quality": trials_quality,
+    }
 
 
 # Module-level singleton used by the routes.
