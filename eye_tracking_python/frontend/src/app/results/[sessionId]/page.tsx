@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/auth";
 import type { SessionSummary } from "@/lib/types";
 import ResultsSummary from "@/components/ResultsSummary";
 import SessionDiagnostics from "@/components/SessionDiagnostics";
@@ -20,12 +21,14 @@ export default function ResultDetailPage({
   params: { sessionId: string };
 }) {
   const sid = params.sessionId;
+  const { user, loading: authLoading } = useRequireAuth();
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [folderMsg, setFolderMsg] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!user) return;
     let active = true;
     (async () => {
       try {
@@ -43,7 +46,7 @@ export default function ResultDetailPage({
     return () => {
       active = false;
     };
-  }, [sid]);
+  }, [sid, user]);
 
   async function openFolder() {
     try {
@@ -56,7 +59,7 @@ export default function ResultDetailPage({
     }
   }
 
-  if (loading) {
+  if (authLoading || !user || loading) {
     return (
       <section className="section">
         <div className="container">
@@ -97,15 +100,13 @@ export default function ResultDetailPage({
           <div className="row" style={{ marginTop: 6 }}>
             {EXPORT_KINDS.map((e) =>
               summary.exports?.[e.kind] ? (
-                <a
+                <button
                   key={e.kind}
                   className="btn btn-secondary"
-                  href={api.downloadUrl(sid, e.kind)}
-                  target="_blank"
-                  rel="noreferrer"
+                  onClick={() => api.downloadExport(sid, e.kind).catch(() => {})}
                 >
                   ↓ {e.label}
-                </a>
+                </button>
               ) : null,
             )}
             <button className="btn btn-ghost" onClick={openFolder}>

@@ -3,15 +3,18 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/auth";
 import type { SessionSummary } from "@/lib/types";
 import ResultsSummary from "@/components/ResultsSummary";
 
 export default function LatestResultPage() {
+  const { user, loading: authLoading } = useRequireAuth();
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!user) return;
     let active = true;
     (async () => {
       try {
@@ -31,9 +34,9 @@ export default function LatestResultPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [user]);
 
-  if (loading) {
+  if (authLoading || !user || loading) {
     return (
       <section className="section">
         <div className="container">

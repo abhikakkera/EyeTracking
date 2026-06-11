@@ -1,5 +1,5 @@
 """
-Centralised path resolution for the PDEYE backend.
+Centralised path resolution for the Ocula backend.
 
 All paths can be overridden via environment variables so tests can point at a
 temporary directory:

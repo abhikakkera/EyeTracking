@@ -33,7 +33,7 @@ def build_html_report(summary: Dict[str, Any], sessions_dir: Optional[Path] = No
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PDEYE Session Report — {sid}</title>
+<title>Ocula Session Report — {sid}</title>
 <style>
   body {{ font-family: -apple-system, Segoe UI, Roboto, sans-serif; color:#0b1320;
          max-width: 760px; margin: 40px auto; padding: 0 20px; }}
@@ -50,7 +50,7 @@ def build_html_report(summary: Dict[str, Any], sessions_dir: Optional[Path] = No
                  padding:14px 16px; color:#46506a; font-size:13px; }}
 </style></head>
 <body>
-  <h1>PDEYE</h1>
+  <h1>Ocula</h1>
   <p class="sub">Session report — {summary.get('activity_name','')} ({summary.get('technical_task_name','')})</p>
   <div class="card">
     <p><span class="badge">{summary.get('tracking_quality_label','')}</span></p>

@@ -1,4 +1,4 @@
-// Null-safe display formatters for PDEYE results.
+// Null-safe display formatters for Ocula results.
 //
 // Rule: null / undefined / NaN  =>  "N/A".
 // A value displays as 0 only when it is a genuine numeric 0 (e.g. "0 rounds").

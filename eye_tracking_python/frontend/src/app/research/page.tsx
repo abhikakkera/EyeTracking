@@ -2,7 +2,7 @@ import DisclaimerBox from "@/components/DisclaimerBox";
 import Link from "next/link";
 
 export const metadata = {
-  title: "The research — PDEYE",
+  title: "The research — Ocula",
 };
 
 export default function ResearchPage() {
@@ -13,7 +13,7 @@ export default function ResearchPage() {
         <h1>Eye movement and neurological research</h1>
         <p className="lead" style={{ color: "var(--ink)", maxWidth: "none" }}>
           A plain-language overview of why eye movement is studied — and exactly
-          what PDEYE does and does not do.
+          what Ocula does and does not do.
         </p>
 
         <div className="card mt-3">
@@ -23,7 +23,7 @@ export default function ResearchPage() {
             involve motor symptoms (such as changes in movement and coordination)
             and non-motor symptoms. It is diagnosed and managed by qualified
             healthcare professionals using clinical assessment and established
-            medical tools. PDEYE plays no part in that process.
+            medical tools. Ocula plays no part in that process.
           </p>
         </div>
 
@@ -67,9 +67,9 @@ export default function ResearchPage() {
         </div>
 
         <div className="card mt-3">
-          <h3>PDEYE&apos;s current role</h3>
+          <h3>Ocula&apos;s current role</h3>
           <p>
-            PDEYE is a research prototype for <strong>eye movement data
+            Ocula is a research prototype for <strong>eye movement data
             collection and movement analysis</strong>. It measures task
             performance and tracking quality during simple activities. It does
             not diagnose, treat, predict, or screen for Parkinson&apos;s disease
@@ -85,7 +85,7 @@ export default function ResearchPage() {
             long road. A future clinically validated model would require large,
             well-labeled clinical datasets, independent validation studies,
             regulatory review, and ongoing oversight by qualified healthcare
-            professionals. Until then, PDEYE is strictly a data-collection
+            professionals. Until then, Ocula is strictly a data-collection
             instrument for Parkinson&apos;s-related research and general eye
             movement research.
           </p>

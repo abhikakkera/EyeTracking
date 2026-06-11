@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import logging
+from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from backend.api.deps import get_current_user
 from backend.db.models import (
     StartTestRequest,
     StartTestResponse,
@@ -19,17 +21,20 @@ router = APIRouter(prefix="/api/tests", tags=["tests"])
 
 
 @router.post("/start", response_model=StartTestResponse)
-def start_test(req: StartTestRequest) -> StartTestResponse:
+def start_test(
+    req: StartTestRequest, user: Dict[str, Any] = Depends(get_current_user)
+) -> StartTestResponse:
     if req.task_type not in tracker_launcher.VALID_TASKS:
         raise HTTPException(status_code=400, detail=f"Invalid task_type: {req.task_type}")
 
     try:
         handle = tracker_launcher.start_run(
             task_type=req.task_type,
-            subject_id=req.participant_id or "anonymous",
+            subject_id=req.participant_id or user.get("name") or "participant",
             trials=req.trials,
             pattern=req.pattern,
             cycles=req.cycles,
+            user_id=user["id"],
         )
     except RuntimeError as exc:
         # Another session is already running

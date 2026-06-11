@@ -22,11 +22,15 @@ def ensure_db() -> None:
     database.init_db()
 
 
-def record_pending(session_id: str, task_type: str, subject_id: str, status: str) -> None:
-    """Insert a placeholder row when a test is started (status preparing/running)."""
+def record_pending(
+    session_id: str, task_type: str, subject_id: str, status: str,
+    user_id: Optional[int] = None,
+) -> None:
+    """Insert a placeholder row when a session starts (status preparing/running)."""
     ensure_db()
     database.upsert_session({
         "session_id": session_id,
+        "user_id": user_id,
         "task_type": task_type,
         "friendly_activity_name": result_parser.friendly_name(task_type),
         "status": status,
@@ -43,15 +47,19 @@ def set_status(session_id: str, status: str) -> None:
         database.update_status(session_id, status)
 
 
-def save_parsed(summary: Dict[str, Any]) -> Dict[str, Any]:
+def save_parsed(summary: Dict[str, Any], user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Persist a parsed summary (from result_parser.parse_session) into the DB.
-    Returns the same summary.
+    Preserves the existing owner (user_id) so re-parsing on read never orphans
+    a session. Returns the same summary.
     """
     ensure_db()
+    if user_id is None:
+        user_id = database.get_session_owner(summary["session_id"])
     exports = summary.get("exports", {}) or {}
     row = {
         "session_id": summary["session_id"],
+        "user_id": user_id,
         "date_time": summary.get("date_time"),
         "task_type": summary.get("technical_task_name"),
         "friendly_activity_name": summary.get("activity_name"),
@@ -117,10 +125,16 @@ def get_summary(session_id: str) -> Optional[Dict[str, Any]]:
     return save_parsed(fresh)
 
 
-def list_summaries(limit: int = 100) -> List[Dict[str, Any]]:
-    """Lightweight rows for the history table."""
+def owns_session(session_id: str, user_id: int) -> bool:
+    """True if `user_id` owns the given session."""
     ensure_db()
-    rows = database.list_sessions(limit)
+    return database.get_session_owner(session_id) == user_id
+
+
+def list_summaries(limit: int = 100, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Lightweight rows for the history table (optionally scoped to a user)."""
+    ensure_db()
+    rows = database.list_sessions(limit, user_id=user_id)
     out = []
     for r in rows:
         out.append({

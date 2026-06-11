@@ -248,16 +248,35 @@ class WebCaptureConfig:
     The FPS / quality / resolution values are advisory defaults the frontend
     reads via /api/web-config; the browser does the actual capturing.
     """
-    upload_fps: int = 12                 # WEB_FRAME_UPLOAD_FPS
-    jpeg_quality: int = 70               # WEB_FRAME_JPEG_QUALITY (0-100)
-    max_width: int = 640                 # WEB_FRAME_MAX_WIDTH
-    max_height: int = 480                # WEB_FRAME_MAX_HEIGHT
+    upload_fps: int = 15                 # WEB_FRAME_UPLOAD_FPS
+    jpeg_quality: int = 85               # WEB_FRAME_JPEG_QUALITY (0-100)
+    max_width: int = 960                 # WEB_FRAME_MAX_WIDTH
+    max_height: int = 720                # WEB_FRAME_MAX_HEIGHT
     backend_timeout_ms: int = 4000       # WEB_BACKEND_TIMEOUT_MS
     # Horizontal gaze displacement (normalized 0-1) that counts as a saccadic
     # response when reconstructing trials from streamed frames.
     response_position_threshold: float = 0.06
     # Privacy: never persist raw frames/eye crops unless explicitly enabled.
     save_debug_crops: bool = False
+
+    # ---- Pre-task stabilization gate (frontend reads these via /web-config) ----
+    # Require a short stable tracking window before the countdown can begin.
+    stabilization_window_ms: int = 1500   # length of the rolling stability window
+    stabilization_min_usable_ratio: float = 0.80  # ≥80% usable frames in window
+    stabilization_min_samples: int = 8    # need at least this many frames first
+
+    # ---- Trial-quality grace (backend trial_quality engine) ----
+    # A trial is judged on its RESPONSE WINDOW, with tolerance for brief loss.
+    usable_confidence_threshold: float = 0.40   # per-frame "usable" floor
+    trial_clear_min_usable_percent: float = 70.0
+    trial_response_window_min_percent: float = 60.0
+    trial_bad_max_usable_percent: float = 40.0
+    # A face gap no longer than this is a bridgeable "short dropout", not a loss.
+    short_dropout_max_ms: int = 200
+    # Frames within this window after target onset are the "onset guard".
+    target_onset_guard_ms: int = 150
+    # Treat a sustained in-task face loss longer than this as an interruption.
+    task_face_loss_warn_ms: int = 1000
 
 
 @dataclass

@@ -3,7 +3,7 @@ import DisclaimerBox from "@/components/DisclaimerBox";
 import { ACTIVITIES } from "@/lib/constants";
 
 export const metadata = {
-  title: "Choose an activity — PDEYE",
+  title: "Choose an activity — Ocula",
 };
 
 export default function TestSelectionPage() {

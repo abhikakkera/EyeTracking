@@ -115,6 +115,12 @@ def env(tmp_path, monkeypatch):
 def client(env):
     from backend import app as appmod
     with TestClient(appmod.app) as c:
+        # Most endpoints require a logged-in user — sign up and attach the token.
+        r = c.post("/api/auth/signup", json={
+            "name": "Test User", "email": "cli@example.com", "password": "password123",
+        })
+        assert r.status_code == 200, r.text
+        c.headers.update({"Authorization": f"Bearer {r.json()['token']}"})
         yield c
 
 

@@ -45,7 +45,7 @@ function RunningInner() {
         const msg =
           e instanceof ApiError
             ? e.message
-            : "Could not reach the PDEYE backend. Is it running on port 8000?";
+            : "Could not reach the Ocula backend. Is it running on port 8000?";
         setPhase("error");
         setMessage(msg);
       }

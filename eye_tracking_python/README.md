@@ -1,13 +1,13 @@
-# PDEYE — Eye Tracking Research System
+# Ocula — Eye Tracking Research System
 
 **Version 0.4.0 — Research Prototype**
 
-PDEYE is a polished local web application layered on top of this Python
+Ocula is a polished local web application layered on top of this Python
 eye-tracking engine. It lets you run eye-movement activities **entirely inside a
 clean website** — the dots and camera preview are in the browser, frames stream
 to the existing Python tracker, and friendly results show up when you finish —
 all on your own machine. See
-**[PDEYE — Web Application Layer](#pdeye--web-application-layer)** below for setup.
+**[Ocula — Web Application Layer](#pdeye--web-application-layer)** below for setup.
 
 ---
 
@@ -123,18 +123,18 @@ Open the URL shown in the terminal (usually `http://localhost:8501`).
 
 ---
 
-## PDEYE — Web Application Layer
+## Ocula — Web Application Layer
 
-PDEYE wraps the tracker in a clean, modern website (Next.js) backed by a local
+Ocula wraps the tracker in a clean, modern website (Next.js) backed by a local
 Python API (FastAPI). You start activities in the browser; the backend launches
 the existing tracker; results flow back automatically.
 
-> ⚠️ **PDEYE is a research prototype for eye-tracking data collection. It does
+> ⚠️ **Ocula is a research prototype for eye-tracking data collection. It does
 > not diagnose, treat, predict, or screen for Parkinson's disease or any other
 > medical condition. Clinical use would require validation, regulatory review,
 > and healthcare professional oversight.**
 
-### What PDEYE is
+### What Ocula is
 
 - A polished landing site, activity picker, camera setup, live run screen,
   results pages, and session history.
@@ -279,9 +279,9 @@ Browser  POST /api/web-sessions/{id}/complete
 
 ### Data privacy
 
-By default, PDEYE stores results **locally on your computer**. Raw eye-tracking
+By default, Ocula stores results **locally on your computer**. Raw eye-tracking
 files and session summaries are saved in the local project folder unless you
-choose to export them. Cloud syncing is not enabled in this prototype. PDEYE does
+choose to export them. Cloud syncing is not enabled in this prototype. Ocula does
 **not** claim HIPAA compliance or any regulatory certification.
 
 ### Limitations / not yet possible

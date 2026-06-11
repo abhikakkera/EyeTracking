@@ -1,8 +1,12 @@
-# PDEYE backend dependencies (in addition to the tracker's requirements.txt).
-# Install with:  pip install -r backend/requirements.txt
+# Ocula backend dependencies (in addition to the tracker's requirements.txt).
+# Install with:  python3 -m pip install -r backend/requirements.txt
 
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.6.0
 python-multipart>=0.0.9
 httpx>=0.27.0          # used by FastAPI TestClient in the test suite
+
+# Local accounts (research prototype auth — not a production setup)
+bcrypt>=4.0.0          # password hashing
+PyJWT>=2.8.0           # signed bearer tokens

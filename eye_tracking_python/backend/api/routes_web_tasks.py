@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from typing import Any, Dict
 
+from fastapi import APIRouter, Depends, HTTPException
+
+from backend.api.deps import get_current_user
 from backend.db.models import (
     SessionSummary,
     StartWebSessionRequest,
@@ -29,15 +32,19 @@ router = APIRouter(prefix="/api/web-sessions", tags=["web-tasks"])
 
 
 @router.post("/start", response_model=StartWebSessionResponse)
-def start_web_session(req: StartWebSessionRequest) -> StartWebSessionResponse:
+def start_web_session(
+    req: StartWebSessionRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> StartWebSessionResponse:
     if req.task_type not in VALID_TASKS:
         raise HTTPException(status_code=400, detail=f"Invalid task_type: {req.task_type}")
     session_id = MANAGER.start(
         task_type=req.task_type,
-        subject_id=req.participant_id or "anonymous",
+        subject_id=req.participant_id or user.get("name") or "participant",
         screen_w=req.screen_width,
         screen_h=req.screen_height,
         task_config=req.task_config,
+        user_id=user["id"],
     )
     return StartWebSessionResponse(session_id=session_id, status="ready")
 

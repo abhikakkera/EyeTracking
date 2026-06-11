@@ -1,1 +1,1 @@
-"""PDEYE backend services: tracker launching, result parsing, storage, reports."""
+"""Ocula backend services: tracker launching, result parsing, storage, reports."""

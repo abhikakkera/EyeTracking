@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { useRequireAuth } from "@/lib/auth";
 import type { SessionRow } from "@/lib/types";
 import SessionTable from "@/components/SessionTable";
 import DisclaimerBox from "@/components/DisclaimerBox";
 
 export default function HistoryPage() {
+  const { user, loading: authLoading } = useRequireAuth();
   const [rows, setRows] = useState<SessionRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,8 +31,18 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (user) load();
+  }, [load, user]);
+
+  if (authLoading || !user) {
+    return (
+      <section className="section">
+        <div className="container">
+          <p className="muted">Loading your results…</p>
+        </div>
+      </section>
+    );
+  }
 
   async function openFolder() {
     try {

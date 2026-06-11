@@ -1,5 +1,5 @@
 """
-Pydantic request/response models for the PDEYE API.
+Pydantic request/response models for the Ocula API.
 
 These define the JSON contract the Next.js frontend consumes (mirrored in
 frontend/src/lib/types.ts).
@@ -42,6 +42,37 @@ class TestStatusResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Results / sessions
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserPublic(BaseModel):
+    id: int
+    email: str
+    name: str = ""
+    created_at: Optional[float] = None
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserPublic
+
+
+class UpdateNameRequest(BaseModel):
+    name: str
+
 
 class SessionSummary(BaseModel):
     session_id: str
@@ -148,3 +179,8 @@ class WebConfigResponse(BaseModel):
     max_width: int
     max_height: int
     backend_timeout_ms: int
+    # Pre-task stabilization gate (frontend requires a stable window before start)
+    stabilization_window_ms: int = 1500
+    stabilization_min_usable_ratio: float = 0.80
+    stabilization_min_samples: int = 8
+    task_face_loss_warn_ms: int = 1000

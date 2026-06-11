@@ -45,6 +45,10 @@ class WebFrame:
     trial_id: str = ""
     trial_number: int = -1
     task_phase: str = "waiting"
+    # Coarse recording phase set by the browser: setup | stabilization |
+    # countdown | task | between_trials | complete. Only "task" frames count
+    # toward usable% / trial quality. Older clients omit it → inferred downstream.
+    recording_phase: str = ""
     target_visible: bool = False
     target_x: float = 0.5
     target_y: float = 0.5

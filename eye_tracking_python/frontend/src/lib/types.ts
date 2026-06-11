@@ -1,4 +1,16 @@
-// PDEYE frontend types — mirror of backend/db/models.py
+// Ocula frontend types — mirror of backend/db/models.py
+
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+  created_at?: number | null;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: User;
+}
 
 export type TaskType =
   | "prosaccade"
@@ -43,10 +55,40 @@ export type TaskMetrics = Record<string, number | string | null>;
 export interface TrialQuality {
   trial_id?: string;
   trial_number?: number | null;
+  target_direction?: string | null;
   trial_quality?: "clear" | "unclear" | "bad" | string;
   unclear_reason?: string | null;
-  tracking_frames_in_trial?: number | null;
-  usable_tracking_frames_in_trial?: number | null;
+  total_trial_frames?: number | null;
+  usable_trial_frames?: number | null;
+  usable_trial_frame_percent?: number | null;
+  no_face_frame_count?: number | null;
+  blink_frame_count?: number | null;
+  response_window_frames?: number | null;
+  usable_response_window_frames?: number | null;
+  usable_response_window_percent?: number | null;
+  no_face_near_target_onset?: boolean | null;
+  no_face_in_response_window?: boolean | null;
+  longest_no_face_streak_ms?: number | null;
+  short_dropout?: boolean | null;
+  response_detected?: boolean | null;
+  reaction_time_ms?: number | null;
+  quality_flags?: string[];
+}
+
+export interface NoFaceDiagnostics {
+  total_frames?: number | null;
+  percent?: number | null;
+  by_phase?: Record<string, number>;
+  by_trial?: {
+    trial_id?: string;
+    trial_number?: number | null;
+    no_face_frames?: number | null;
+    no_face_near_target_onset?: boolean | null;
+    no_face_in_response_window?: boolean | null;
+    longest_streak_ms?: number | null;
+  }[];
+  longest_streak_frames?: number | null;
+  longest_streak_ms?: number | null;
 }
 
 export interface SessionDiagnostics {
@@ -62,6 +104,9 @@ export interface SessionDiagnostics {
   average_confidence?: number | null;
   total_trials?: number | null;
   valid_trials?: number | null;
+  well_tracked_trials?: number | null;
+  rounds_with_response?: number | null;
+  untrackable_trials?: number | null;
   unclear_trials?: number | null;
   bad_trials?: number | null;
   task_events_received?: number | null;
@@ -69,6 +114,9 @@ export interface SessionDiagnostics {
   missing_gaze_reason_counts?: Record<string, number>;
   main_unclear_reason?: string | null;
   trials_quality?: TrialQuality[];
+  no_face?: NoFaceDiagnostics | null;
+  frames_by_recording_phase?: Record<string, number>;
+  stabilization_overridden?: boolean | null;
 }
 
 export interface SessionSummary {
@@ -161,13 +209,28 @@ export interface WebConfig {
   max_width: number;
   max_height: number;
   backend_timeout_ms: number;
+  stabilization_window_ms?: number;
+  stabilization_min_usable_ratio?: number;
+  stabilization_min_samples?: number;
+  task_face_loss_warn_ms?: number;
 }
+
+// Coarse recording phase tagged on every uploaded frame. Only "task" frames
+// count toward usable% / trial quality on the backend.
+export type RecordingPhase =
+  | "setup"
+  | "stabilization"
+  | "countdown"
+  | "task"
+  | "between_trials"
+  | "complete";
 
 // Per-frame task context the browser tags each uploaded frame with.
 export interface TaskFrameContext {
   trial_id: string;
   trial_number: number;
   task_phase: string;
+  recording_phase?: RecordingPhase;
   target_visible: boolean;
   target_x: number;
   target_y: number;

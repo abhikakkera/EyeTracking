@@ -38,6 +38,12 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PDEYE_SESSIONS_DIR", str(tmp_path / "sessions"))
     from backend import app as appmod
     with TestClient(appmod.app) as c:
+        # Web sessions require a logged-in user — sign up and attach the token.
+        r = c.post("/api/auth/signup", json={
+            "name": "Test User", "email": "web@example.com", "password": "password123",
+        })
+        assert r.status_code == 200, r.text
+        c.headers.update({"Authorization": f"Bearer {r.json()['token']}"})
         yield c
 
 
@@ -58,6 +64,7 @@ def _frame(client, sid, ts, gaze_phase="target", trial_id="t1", target_x=0.85):
         "trial_id": trial_id,
         "trial_number": 1,
         "task_phase": gaze_phase,
+        "recording_phase": "task",
         "target_visible": gaze_phase == "target",
         "target_x": target_x,
         "target_y": 0.5,
@@ -146,6 +153,24 @@ def test_full_session_complete_and_results(client):
     assert summary["technical_task_name"] == "prosaccade"
     assert summary["rounds_completed"] == 1
     assert "disclaimer" in summary
+
+    # New trial-quality diagnostics flow through end-to-end.
+    diag = summary["diagnostics"]
+    assert "no_face" in diag and "by_phase" in diag["no_face"]
+    assert "well_tracked_trials" in diag
+    assert "rounds_with_response" in diag
+    assert isinstance(diag["trials_quality"], list) and len(diag["trials_quality"]) == 1
+    tq = diag["trials_quality"][0]
+    # Each round now carries response-window detail, a quality verdict + a reason.
+    for key in ("usable_response_window_percent", "trial_quality",
+                "no_face_near_target_onset", "longest_no_face_streak_ms"):
+        assert key in tq
+    # main_unclear_reason is now trial-level (never a raw frame-counter artifact).
+    assert diag.get("main_unclear_reason") in (
+        None, "no_tracking_data", "no_face_major", "insufficient_tracking",
+        "insufficient_response_window_data", "no_face_at_target_onset",
+        "no_face_brief_dropout", "blink_during_response_window",
+    )
 
     # Stored + retrievable via the shared results route
     r2 = client.get(f"/api/results/{sid}")

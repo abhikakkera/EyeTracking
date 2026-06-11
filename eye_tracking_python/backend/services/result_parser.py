@@ -127,12 +127,18 @@ def parse_session(
     session_id: str,
     sessions_dir: Optional[Path] = None,
     extra_diagnostics: Optional[Dict[str, Any]] = None,
+    frame_stats: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Parse one completed task session into a frontend-friendly summary dict.
 
     `extra_diagnostics` (web sessions) augments the file-derived diagnostics
-    with event counts and richer per-frame reasons.
+    with event counts and trial-level quality.
+
+    `frame_stats` (web sessions) carries TASK-PHASE-ONLY usable counts from the
+    trial_quality engine; when present they replace the file-based usable% so
+    setup/countdown frames never drag down the headline number. The raw frames
+    CSV still contains every frame — only the processed metric changes.
     """
     files = session_files(session_id, sessions_dir)
     if not files["task_metadata"].exists():
@@ -144,12 +150,21 @@ def parse_session(
     analysis = tm.get("analysis", {}) or {}
     eye_summary = md.get("summary", {}) or {}
 
-    # ---- Strict per-frame usable-data analysis (the core fix) ----
+    # ---- Per-frame usable-data analysis (file-based: ALL frames) ----
     fd = _frame_diagnostics(files["frames"])
     total_frames = fd["total_frames"]
-    usable_frames = fd["usable_eye_tracking_frames"]
-    usable_percent = round(100.0 * usable_frames / total_frames, 1) if total_frames else None
-    avg_confidence = fd["average_confidence"]
+
+    # ---- Usable% source: prefer task-phase-only stats for web sessions ----
+    if frame_stats and frame_stats.get("total_task_frames"):
+        usable_frames = frame_stats["usable_eye_tracking_frames"]
+        usable_denom = frame_stats["total_task_frames"]
+        usable_percent = frame_stats.get("usable_eye_tracking_percent")
+        avg_confidence = frame_stats.get("average_confidence") or fd["average_confidence"]
+    else:
+        usable_frames = fd["usable_eye_tracking_frames"]
+        usable_denom = total_frames
+        usable_percent = round(100.0 * usable_frames / total_frames, 1) if total_frames else None
+        avg_confidence = fd["average_confidence"]
 
     # ---- Trial counts (task-aware) ----
     file_total, file_valid = _trial_counts(files["trials"], task_type)
@@ -198,8 +213,21 @@ def parse_session(
     frames_per_trial = round(total_frames / total_trials, 1) if total_trials else None
     diagnostics["frames_per_trial"] = frames_per_trial
 
+    is_web = bool(extra_diagnostics and "trials_quality" in extra_diagnostics)
     if extra_diagnostics:
         diagnostics.update({k: v for k, v in extra_diagnostics.items() if v is not None})
+
+    if is_web:
+        # Web sessions: separate "could we track this round" (tracking) from
+        # "did they respond" (task). main_unclear_reason is now TRIAL-level and
+        # may legitimately be None — so override explicitly (the dict-merge above
+        # skips None and would otherwise leave the misleading frame-level reason).
+        diagnostics["main_unclear_reason"] = extra_diagnostics.get("main_unclear_reason")
+        diagnostics["valid_trials"] = valid_trials                 # responses (task)
+        diagnostics["well_tracked_trials"] = extra_diagnostics.get("well_tracked_trials")
+        diagnostics["rounds_with_response"] = valid_trials
+        diagnostics["untrackable_trials"] = extra_diagnostics.get("untrackable_trials", 0)
+        diagnostics["unclear_trials"] = extra_diagnostics.get("untrackable_trials", 0)
 
     notes = None
     if valid_trials == 0 and total_trials > 0:
@@ -230,7 +258,11 @@ def parse_session(
         "task_metrics": task_metrics,
         "diagnostics": diagnostics,
         "notes": notes,
-        "recommendations": _recommendations(usable_percent, valid_trials, total_trials, blink_count),
+        "recommendations": _recommendations(
+            usable_percent, valid_trials, total_trials, blink_count,
+            well_tracked=diagnostics.get("well_tracked_trials"),
+            trials_quality=diagnostics.get("trials_quality"),
+        ),
         "exports": existing_exports(session_id, sessions_dir),
         "disclaimer": DISCLAIMER,
     }
@@ -393,19 +425,55 @@ def _trial_counts(path: Path, task_type: str) -> Tuple[int, int]:
 # Recommendations (research-only, friendly)
 # ---------------------------------------------------------------------------
 
-def _recommendations(usable: Optional[float], valid_trials: int,
-                     total_trials: int, blinks: Optional[int]) -> List[str]:
+def _recommendations(
+    usable: Optional[float],
+    valid_trials: int,
+    total_trials: int,
+    blinks: Optional[int],
+    well_tracked: Optional[int] = None,
+    trials_quality: Optional[List[Dict[str, Any]]] = None,
+) -> List[str]:
+    """
+    Specific, honest suggestions. The key case (goal 10): high usable% but a low
+    response rate means tracking was fine — the rounds were just unclear when the
+    dot appeared. Say that, instead of "enough clear data for review".
+    """
     recs: List[str] = []
-    if total_trials > 0 and valid_trials == 0:
+    u = usable if usable is not None else 0.0
+    response_rate = (valid_trials / total_trials) if total_trials else 0.0
+
+    # How many rounds lost the face right as the dot appeared?
+    onset_loss = 0
+    if trials_quality:
+        onset_loss = sum(1 for t in trials_quality if t.get("no_face_near_target_onset"))
+
+    well_ok = well_tracked if well_tracked is not None else None
+
+    if total_trials > 0 and valid_trials == 0 and u < 60:
         recs.append("No clear eye movements were captured. Sit a little closer and face the camera squarely.")
         recs.append("Even, front-on lighting on your face helps the camera see your eyes.")
-    elif usable is None or usable < 60:
+    elif u < 60:
         recs.append("Tracking was limited. Try sitting a little closer to the camera.")
         recs.append("Better, even lighting on your face may improve tracking.")
-    elif usable < 80:
+    elif total_trials > 0 and response_rate < 0.6:
+        # The honest, specific case: the camera saw the eyes, but several rounds
+        # had no detected movement when the dot appeared.
+        recs.append(
+            "Eye tracking was mostly clear, but several rounds were unclear during the "
+            "moment the dot appeared."
+        )
+        if onset_loss >= 2:
+            recs.append(
+                "Your face briefly left the camera view during several rounds — try staying "
+                "centered when the dot appears."
+            )
+        else:
+            recs.append("Try keeping your face centered and glancing to each dot as soon as it appears.")
+        recs.append("Avoid moving your head during the moment the dot changes.")
+    elif u < 80:
         recs.append("Tracking was usable. Keeping your head centered and still helps next time.")
     else:
-        recs.append("The session had enough clear data for review.")
+        recs.append("Eye tracking was clear and most rounds were measured well.")
 
     if blinks and blinks > 40:
         recs.append("Frequent blinking was detected — resting your eyes beforehand can help.")

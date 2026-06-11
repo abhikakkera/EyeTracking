@@ -1,5 +1,5 @@
 """
-PDEYE backend — FastAPI application.
+Ocula backend — FastAPI application.
 
 Run:
     cd eye_tracking_python
@@ -14,7 +14,7 @@ Two modes are served:
 
 All data stays local.
 
-⚠️  PDEYE is a research prototype. It does not diagnose, treat, predict, or
+⚠️  Ocula is a research prototype. It does not diagnose, treat, predict, or
     screen for Parkinson's disease or any other medical condition.
 """
 from __future__ import annotations
@@ -34,6 +34,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api import (
+    routes_auth,
     routes_frame_stream,
     routes_results,
     routes_sessions,
@@ -49,14 +50,14 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s %(name)s  %(message)s",
 )
-logger = logging.getLogger("pdeye.backend")
+logger = logging.getLogger("ocula.backend")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     session_store.ensure_db()
-    logger.info("PDEYE backend ready")
+    logger.info("Ocula backend ready")
     logger.info("  sessions dir: %s", get_sessions_dir())
     logger.info("  database:     %s", get_db_path())
     yield
@@ -64,10 +65,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="PDEYE Backend",
-    version="0.5.0",
+    title="Ocula Backend",
+    version="0.6.0",
     description=(
-        "Local backend for the PDEYE eye-movement research prototype. "
+        "Local backend for the Ocula eye-movement research prototype. "
         + DISCLAIMER
     ),
     lifespan=lifespan,
@@ -85,6 +86,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(routes_auth.router)             # local accounts
 app.include_router(routes_tests.router)            # CLI/desktop mode (legacy)
 app.include_router(routes_results.router)
 app.include_router(routes_sessions.router)
@@ -96,8 +98,8 @@ app.include_router(routes_frame_stream.router)     # in-browser frame upload
 def health() -> dict:
     return {
         "status": "ok",
-        "service": "pdeye-backend",
-        "version": "0.5.0",
+        "service": "ocula-backend",
+        "version": "0.6.0",
         "sessions_dir": str(get_sessions_dir()),
         "disclaimer": DISCLAIMER,
     }
@@ -113,6 +115,10 @@ def web_config() -> WebConfigResponse:
         max_width=wc.max_width,
         max_height=wc.max_height,
         backend_timeout_ms=wc.backend_timeout_ms,
+        stabilization_window_ms=wc.stabilization_window_ms,
+        stabilization_min_usable_ratio=wc.stabilization_min_usable_ratio,
+        stabilization_min_samples=wc.stabilization_min_samples,
+        task_face_loss_warn_ms=wc.task_face_loss_warn_ms,
     )
 
 

@@ -433,7 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
     tk.add_argument("--cycles", type=int, default=None,
                     help="Number of pursuit cycles (smooth_pursuit task only)")
     tk.add_argument("--session-id", dest="session_id", default=None,
-                    help="Use a specific session id (set by the PDEYE backend)")
+                    help="Use a specific session id (set by the Ocula backend)")
     tk.add_argument("--out", default=None,
                     help="Override output directory")
 

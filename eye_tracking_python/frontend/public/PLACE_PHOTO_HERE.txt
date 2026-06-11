@@ -1,0 +1,2 @@
+Place your founder portrait here as 'founder.jpg' (any common image works if renamed).
+The About page shows an 'AK' placeholder until this file exists.

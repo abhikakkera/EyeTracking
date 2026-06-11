@@ -29,7 +29,7 @@ from src.tasks.task_schema import TaskSession
 from src.tracking.eye_tracker import EyeTracker
 
 from backend.paths import DISCLAIMER, get_sessions_dir
-from backend.services import frame_processor, result_parser, session_store
+from backend.services import frame_processor, result_parser, session_store, trial_quality
 from backend.services.task_event_recorder import (
     WebFrame,
     build_task_contexts,
@@ -57,6 +57,7 @@ class WebSession:
     screen_h: int
     task_config: Dict[str, Any]
     tracker: EyeTracker
+    user_id: Optional[int] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
     frames: List[WebFrame] = field(default_factory=list)
     events: List[dict] = field(default_factory=list)
@@ -84,6 +85,7 @@ class WebSessionManager:
         screen_w: int,
         screen_h: int,
         task_config: Dict[str, Any],
+        user_id: Optional[int] = None,
     ) -> str:
         if task_type not in VALID_TASKS:
             raise ValueError(f"Invalid task_type: {task_type}")
@@ -108,11 +110,14 @@ class WebSessionManager:
             screen_h=screen_h,
             task_config=task_config or {},
             tracker=tracker,
+            user_id=user_id,
         )
         with self._guard:
             self._sessions[session_id] = sess
 
-        session_store.record_pending(session_id, task_type, sess.subject_id, status="running")
+        session_store.record_pending(
+            session_id, task_type, sess.subject_id, status="running", user_id=user_id
+        )
         logger.info("Web session started: %s (%s)", session_id, task_type)
         return session_id
 
@@ -176,6 +181,7 @@ class WebSessionManager:
                 trial_id=str(meta.get("trial_id") or ""),
                 trial_number=int(meta.get("trial_number") or -1),
                 task_phase=str(meta.get("task_phase") or "waiting"),
+                recording_phase=str(meta.get("recording_phase") or ""),
                 target_visible=bool(meta.get("target_visible")),
                 target_x=_f(meta.get("target_x"), 0.5),
                 target_y=_f(meta.get("target_y"), 0.5),
@@ -275,10 +281,14 @@ class WebSessionManager:
             _write_json(out / f"{session_id}_task_config.json", _serializable(sess.task_config))
 
             # 5. Event-/frame-level diagnostics from the in-memory web session
-            extra_diag = _web_diagnostics(sess, trials)
+            extra_diag, frame_stats = _web_diagnostics(sess, trials)
 
-            # 6. Parse into the friendly summary + persist + summary_report.json
-            summary = result_parser.parse_session(session_id, extra_diagnostics=extra_diag)
+            # 6. Parse into the friendly summary + persist + summary_report.json.
+            #    frame_stats overrides the headline usable% with a TASK-PHASE-ONLY
+            #    figure so setup/countdown frames never penalise task results.
+            summary = result_parser.parse_session(
+                session_id, extra_diagnostics=extra_diag, frame_stats=frame_stats
+            )
             summary["mode"] = "web"
             _write_json(out / f"{session_id}_summary_report.json", summary)
             session_store.save_parsed(summary)
@@ -353,53 +363,53 @@ def _write_json(path: Path, doc: Dict[str, Any]) -> None:
     path.write_text(json.dumps(doc, indent=2, default=str))
 
 
-def _web_diagnostics(sess: "WebSession", trials: list) -> Dict[str, Any]:
+def _web_diagnostics(sess: "WebSession", trials: list) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    Event- and frame-level diagnostics computed from the in-memory web session.
-    Augments the file-derived diagnostics in result_parser.
+    Event- and frame-level diagnostics computed from the in-memory web session,
+    using the trial_quality engine (response-window analysis + grace + accurate
+    no-face attribution).
+
+    Returns (extra_diagnostics, frame_stats) where frame_stats holds the
+    TASK-PHASE-ONLY usable counts that override result_parser's file-based figures.
     """
     events = sess.events
     target_onsets = sum(1 for e in events if e.get("type") == "target_shown")
+    overridden = any(e.get("type") == "stabilization_overridden" for e in events)
 
-    # Per-trial usable-frame counts (face + not blink + ok quality + confidence)
-    usable_by_trial: Dict[str, int] = {}
-    total_by_trial: Dict[str, int] = {}
+    tq = trial_quality.analyze(sess.task_type, sess.frames, trials, CONFIG.web_capture)
+    per_trial = tq["per_trial"]
+    counts = tq["counts"]
+
+    # Phase breakdown of how frames were recorded (so the panel can show that
+    # most no-face frames were during setup, not the task).
+    phase_counts: Dict[str, int] = {}
     for f in sess.frames:
-        total_by_trial[f.trial_id] = total_by_trial.get(f.trial_id, 0) + 1
-        if (f.face_detected and not f.blink and f.frame_quality != "bad"
-                and f.confidence >= 0.40):
-            usable_by_trial[f.trial_id] = usable_by_trial.get(f.trial_id, 0) + 1
+        ph = getattr(f, "recording_phase", "") or "unknown"
+        phase_counts[ph] = phase_counts.get(ph, 0) + 1
 
-    bad = 0
-    trials_quality = []
-    for t in trials:
-        tid = getattr(t, "trial_id", "")
-        usable = usable_by_trial.get(tid, 0)
-        nframes = total_by_trial.get(tid, 0)
-        responded = bool(getattr(t, "response_detected", False))
-        if usable == 0:
-            quality, reason = "bad", "insufficient_tracking"
-            bad += 1
-        elif responded:
-            quality, reason = "clear", None
-        else:
-            quality, reason = "unclear", "no_gaze_response"
-        trials_quality.append({
-            "trial_id": tid,
-            "trial_number": getattr(t, "trial_number", None),
-            "trial_quality": quality,
-            "unclear_reason": reason,
-            "tracking_frames_in_trial": nframes,
-            "usable_tracking_frames_in_trial": usable,
-        })
-
-    return {
+    extra = {
         "total_frames_received": sess.frame_count,
         "task_events_received": len(events),
         "target_onset_events_received": target_onsets,
-        "bad_trials": bad,
-        "trials_quality": trials_quality,
+        # Tracking-quality of each round (clear/unclear/bad) — NOT response counts.
+        "well_tracked_trials": tq["well_tracked_trials"],
+        "untrackable_trials": tq["untrackable_trials"],
+        "rounds_with_response": tq["rounds_with_response"],
+        "bad_trials": counts.get("bad", 0),
+        "unclear_trials": tq["untrackable_trials"],
+        "main_unclear_reason": tq["main_unclear_reason"],
+        "trials_quality": per_trial,
+        "no_face": tq["no_face"],
+        "frames_by_recording_phase": phase_counts,
+        "stabilization_overridden": overridden,
+        "capture": {
+            "upload_fps_target": CONFIG.web_capture.upload_fps,
+            "jpeg_quality": CONFIG.web_capture.jpeg_quality,
+            "max_width": CONFIG.web_capture.max_width,
+            "max_height": CONFIG.web_capture.max_height,
+        },
     }
+    return extra, tq["frame_stats"]
 
 
 # Module-level singleton used by the routes.

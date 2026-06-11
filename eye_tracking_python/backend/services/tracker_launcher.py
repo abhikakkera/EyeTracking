@@ -128,6 +128,7 @@ def start_run(
     trials: Optional[int] = None,
     pattern: Optional[str] = None,
     cycles: Optional[int] = None,
+    user_id: Optional[int] = None,
 ) -> RunHandle:
     """Launch a new tracker run. Raises RuntimeError if one is already active."""
     if task_type not in VALID_TASKS:
@@ -151,7 +152,9 @@ def start_run(
     )
     _RUNS[session_id] = handle
 
-    session_store.record_pending(session_id, task_type, subject_id, status="running")
+    session_store.record_pending(
+        session_id, task_type, subject_id, status="running", user_id=user_id
+    )
 
     try:
         proc, fh = _spawn(cmd, log_path)

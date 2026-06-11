@@ -1,1 +1,1 @@
-"""PDEYE database layer (SQLite, local-only)."""
+"""Ocula database layer (SQLite, local-only)."""

@@ -1,43 +1,44 @@
+"use client";
+
 import Link from "next/link";
+import { useAuth } from "@/lib/auth";
 import DisclaimerBox from "@/components/DisclaimerBox";
-import { SHORT_DISCLAIMER } from "@/lib/constants";
 
 export default function Hero() {
+  const { user } = useAuth();
+  const startHref = user ? "/test" : "/signup";
+
   return (
     <section className="hero">
       <div className="container hero-grid">
         <div className="fade-up">
-          <span className="eyebrow">Research-grade eye tracking</span>
-          <h1>PDEYE</h1>
-          <p className="lead">
-            Eye movement tracking for research-grade digital health insights.
-          </p>
-          <p className="desc">
-            PDEYE records how your eyes move during simple dot-following
-            activities. The platform is designed to collect high-quality eye
-            movement data for research into neurological movement patterns,
-            including Parkinson&apos;s-related research.
+          <span className="eyebrow">Ocula</span>
+          <h1>Eye movement tracking, made simple.</h1>
+          <p className="lead-xl">
+            Ocula guides you through short visual activities and records eye
+            movement patterns with your camera — designed for research-quality
+            data collection, personal review, and future neurological research.
           </p>
 
           <div className="hero-actions">
-            <Link className="btn btn-primary btn-lg" href="/test">
-              Start an Eye Movement Session
+            <Link className="btn btn-primary btn-lg" href={startHref}>
+              Start a session
             </Link>
-            <Link className="btn btn-secondary btn-lg" href="/history">
-              View Previous Results
-            </Link>
-            <Link className="btn btn-ghost btn-lg" href="/research">
-              Learn About the Research
+            <Link className="btn btn-ghost btn-lg" href="/about">
+              Learn about Ocula
             </Link>
           </div>
 
-          <div style={{ maxWidth: 560, marginTop: 18 }}>
-            <DisclaimerBox compact text={SHORT_DISCLAIMER} />
+          <div style={{ maxWidth: 540, marginTop: 22 }}>
+            <DisclaimerBox
+              compact
+              text="Ocula is not a diagnostic tool. It does not diagnose, treat, predict, or screen for Parkinson's disease or any other condition."
+            />
           </div>
         </div>
 
         <div className="hero-visual fade-up" aria-hidden>
-          <div className="crosshair" />
+          <div className="fix" />
           <div className="target" />
           <div className="gaze-dot" />
         </div>

@@ -8,8 +8,18 @@ export const DISCLAIMER =
   "regulatory review, and healthcare professional oversight.";
 
 export const SHORT_DISCLAIMER =
-  "PDEYE is not a diagnostic tool. It does not diagnose, treat, predict, or " +
+  "Ocula is not a diagnostic tool. It does not diagnose, treat, predict, or " +
   "screen for Parkinson's disease or any other condition.";
+
+// Founder details (used on the About page). Sourced from the resume — no
+// invented credentials.
+export const FOUNDER = {
+  name: "Abhinav Kakkera",
+  role: "Student researcher · Founder of Ocula",
+  school: "Thomas Jefferson High School for Science and Technology (TJHSST)",
+  initials: "AK",
+  photo: "/founder.jpg",
+};
 
 export interface ActivityDef {
   slug: TaskType;

@@ -28,8 +28,11 @@ export function useWebcam(autoStart = true): UseWebcam {
   const start = useCallback(async () => {
     if (streamRef.current) return;
     try {
+      // Request a higher-resolution stream so the backend gets sharper frames
+      // (better face/eye detection). The capture loop still downscales to the
+      // server's max_width/max_height before upload, so bandwidth stays bounded.
       const s = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
         audio: false,
       });
       streamRef.current = s;

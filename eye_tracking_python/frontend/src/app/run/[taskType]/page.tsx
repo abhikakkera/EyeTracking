@@ -5,14 +5,16 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { api } from "@/lib/api";
+import { useRequireAuth } from "@/lib/auth";
 import { activityBySlug } from "@/lib/constants";
 import { DEFAULT_TASK_CONFIG } from "@/lib/taskConfigs";
-import type { TaskType, WebConfig, WebEvent, TaskFrameContext } from "@/lib/types";
+import type { TaskType, WebConfig, WebEvent, TaskFrameContext, RecordingPhase } from "@/lib/types";
 
 import { useWebcam } from "@/hooks/useWebcam";
 import { useTrackingStream } from "@/hooks/useTrackingStream";
 import { useFrameCapture } from "@/hooks/useFrameCapture";
 import { useTaskRunner } from "@/hooks/useTaskRunner";
+import { useStabilization } from "@/hooks/useStabilization";
 
 import WebcamPreview from "@/components/WebcamPreview";
 import CameraSetupGuide, { type GuideItem } from "@/components/CameraSetupGuide";
@@ -34,6 +36,7 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
   const router = useRouter();
   const activity = activityBySlug(params.taskType);
   const taskType = params.taskType as TaskType;
+  const { user } = useRequireAuth();
 
   const { videoRef, stream, ready, error: camError } = useWebcam(true);
   const tracking = useTrackingStream();
@@ -45,10 +48,19 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
   const [count, setCount] = useState(3);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [debug, setDebug] = useState(false);
+  const [faceLost, setFaceLost] = useState(false);
 
   const sessionStartMs = useRef(0);
   const webCfg = useRef<WebConfig | null>(null);
   const startedSession = useRef(false);
+  const lastFaceMs = useRef(0);
+
+  // Pre-task stabilization gate — require a steady tracking window before start.
+  const stab = useStabilization(tracking.latest, {
+    windowMs: webCfg.current?.stabilization_window_ms,
+    minUsableRatio: webCfg.current?.stabilization_min_usable_ratio,
+    minSamples: webCfg.current?.stabilization_min_samples,
+  });
 
   // ---- Task runner ----
   const handleEvent = useCallback(
@@ -84,9 +96,9 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
   const runnerRef = useRef(runner);
   runnerRef.current = runner;
 
-  // ---- Start the web session once the camera is live ----
+  // ---- Start the web session once the camera is live (and user is known) ----
   useEffect(() => {
-    if (!activity || !ready || startedSession.current) return;
+    if (!activity || !ready || !user || startedSession.current) return;
     startedSession.current = true;
     (async () => {
       try {
@@ -101,17 +113,31 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
         setSessionId(res.session_id);
       } catch {
         setPhase("error");
-        setErrorMsg("Could not reach the PDEYE backend. Make sure it's running on port 8000.");
+        setErrorMsg("Could not reach the Ocula backend. Make sure it's running on port 8000.");
       }
     })();
-  }, [activity, ready, taskType]);
+  }, [activity, ready, taskType, user]);
 
   // ---- Frame streaming (setup → countdown → running) ----
+  // Every frame is tagged with a recording_phase so the backend counts ONLY
+  // "task" frames toward usable% / trial quality (setup & countdown excluded).
+  const taggedContext = useCallback((): TaskFrameContext => {
+    if (phase === "running") {
+      const c = runner.getContext();
+      const tp = c.task_phase;
+      const rp: RecordingPhase =
+        tp === "iti" ? "between_trials" : tp === "done" ? "complete" : "task";
+      return { ...c, recording_phase: rp };
+    }
+    const rp: RecordingPhase = phase === "countdown" ? "countdown" : "stabilization";
+    return { ...WAITING_CTX, recording_phase: rp };
+  }, [phase, runner]);
+
   useFrameCapture({
     videoRef,
     sessionId,
     enabled: phase === "setup" || phase === "countdown" || phase === "running",
-    getContext: () => (phase === "running" ? runner.getContext() : WAITING_CTX),
+    getContext: taggedContext,
     getTaskStartMs: () => sessionStartMs.current,
     fps: webCfg.current?.upload_fps ?? 12,
     jpegQuality: webCfg.current?.jpeg_quality ?? 70,
@@ -138,11 +164,40 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, count]);
 
-  function beginCountdown() {
+  function beginCountdown(override = false) {
+    // "Start anyway" before the gate is satisfied → tag the session lower-confidence.
+    if (override && sessionId) {
+      api
+        .sendEvent(sessionId, { type: "stabilization_overridden", timestamp_ms: performance.now() })
+        .catch(() => {});
+    }
     setCount(3);
     setPhase("countdown");
     containerRef.current?.requestFullscreen?.().catch(() => {});
   }
+
+  // ---- Live face-loss warning during the task (goal 8) ----
+  // Track the last time a face was seen; if it's been gone longer than the
+  // configured threshold, surface a gentle "center your face" prompt.
+  useEffect(() => {
+    if (tracking.latest?.face_detected) {
+      lastFaceMs.current = performance.now();
+      if (faceLost) setFaceLost(false);
+    }
+  }, [tracking.latest, faceLost]);
+
+  useEffect(() => {
+    if (phase !== "running") {
+      setFaceLost(false);
+      return;
+    }
+    lastFaceMs.current = performance.now();
+    const warnMs = webCfg.current?.task_face_loss_warn_ms ?? 1000;
+    const id = setInterval(() => {
+      if (performance.now() - lastFaceMs.current > warnMs) setFaceLost(true);
+    }, 250);
+    return () => clearInterval(id);
+  }, [phase]);
 
   const exit = useCallback(async () => {
     runner.cancel();
@@ -194,29 +249,39 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
 
   const guideItems: GuideItem[] = [
     {
-      key: "cam",
-      label: "Camera connected",
-      state: ready ? "ok" : "pending",
-      hint: ready ? "Great — your camera is on." : "Waiting for camera access…",
+      key: "face",
+      label: "Face visible",
+      state: stab.checks.face,
+      hint: stab.checks.face === "ok" ? "We can see your face." : "Center your face in the view.",
     },
     {
       key: "eyes",
-      label: "Eyes visible",
-      state: tracking.latest?.face_detected ? "ok" : "warn",
-      hint: tracking.latest?.face_detected
-        ? "We can see your eyes clearly."
-        : "Make sure your face is centered in the preview.",
+      label: "Eyes clear",
+      state: stab.checks.eyes,
+      hint: stab.checks.eyes === "ok" ? "Your eyes are clear." : "Look toward the camera.",
     },
     {
-      key: "pos",
-      label: "Position & lighting",
-      state:
-        tracking.latest?.tracking_status === "good"
-          ? "ok"
-          : tracking.latest
-            ? "warn"
-            : "pending",
-      hint: tracking.latest?.guidance_message ?? "Checking your setup…",
+      key: "distance",
+      label: "Distance good",
+      state: stab.checks.distance,
+      hint:
+        tracking.latest?.distance_status === "too_close"
+          ? "Move a little farther back."
+          : tracking.latest?.distance_status === "too_far"
+            ? "Move a little closer."
+            : "Nice — good distance from the camera.",
+    },
+    {
+      key: "lighting",
+      label: "Lighting good",
+      state: stab.checks.lighting,
+      hint: stab.checks.lighting === "ok" ? "Lighting looks good." : "Try adding more light.",
+    },
+    {
+      key: "stability",
+      label: "Holding steady",
+      state: stab.checks.stability,
+      hint: stab.checks.stability === "ok" ? "Steady — you're ready." : "Hold still for a moment…",
     },
   ];
 
@@ -266,20 +331,34 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
                 <TaskInstructions taskType={taskType} />
                 <CameraSetupGuide items={guideItems} />
                 <div className="note small">
-                  Camera frames are processed locally by the PDEYE backend in this
+                  Camera frames are processed locally by the Ocula backend in this
                   prototype. Raw video is not saved unless debug recording is
                   enabled.
                 </div>
-                <div className="row">
+                <div className="row" style={{ alignItems: "center" }}>
                   <button
                     className="btn btn-primary btn-lg"
-                    onClick={beginCountdown}
-                    disabled={!sessionId || !ready}
+                    onClick={() => beginCountdown(false)}
+                    disabled={!sessionId || !ready || !stab.ready}
                   >
-                    Start activity
+                    {stab.ready ? "Start activity" : "Hold steady…"}
                   </button>
+                  {sessionId && ready && !stab.ready && (
+                    <button
+                      className="btn btn-ghost btn-lg"
+                      onClick={() => beginCountdown(true)}
+                      title="Starts now even though tracking isn't fully steady. This session will be tagged lower-confidence."
+                    >
+                      Start anyway
+                    </button>
+                  )}
                   <Link className="btn btn-ghost btn-lg" href="/test">Back</Link>
                 </div>
+                <p className="small muted" style={{ marginTop: 2 }}>
+                  {stab.ready
+                    ? "Great — your eyes are clear. You can begin."
+                    : stab.guidance}
+                </p>
                 <label className="small muted" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
                   Show technical details
@@ -311,6 +390,12 @@ export default function RunPage({ params }: { params: { taskType: string } }) {
               </div>
             )}
           </TaskCanvas>
+
+          {phase === "running" && faceLost && (
+            <div className="face-lost-banner" role="status">
+              Let’s get your face centered again — keep looking at the screen.
+            </div>
+          )}
 
           {(phase === "running" || phase === "countdown") && (
             <>

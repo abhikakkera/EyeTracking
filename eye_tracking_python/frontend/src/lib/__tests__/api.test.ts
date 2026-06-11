@@ -86,9 +86,18 @@ describe("api client (web task functions)", () => {
     expect((init as RequestInit).body).toBeInstanceOf(FormData);
   });
 
-  it("downloadUrl builds a stable path", () => {
-    expect(api.downloadUrl("sid123", "trials")).toContain(
-      "/api/results/sid123/download/trials",
-    );
+  it("login posts credentials to the auth route", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        jsonResponse({ token: "t", user: { id: 1, email: "a@b.com", name: "A" } }),
+      );
+
+    const res = await api.login({ email: "a@b.com", password: "password123" });
+    expect(res.token).toBe("t");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/api/auth/login");
+    expect((init as RequestInit).method).toBe("POST");
+    expect(String((init as RequestInit).body)).toContain("a@b.com");
   });
 });

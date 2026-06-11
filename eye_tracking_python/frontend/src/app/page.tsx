@@ -1,8 +1,37 @@
 import Link from "next/link";
 import Hero from "@/components/Hero";
-import FeatureCard from "@/components/FeatureCard";
 import DisclaimerBox from "@/components/DisclaimerBox";
-import { ACTIVITIES } from "@/lib/constants";
+
+const STEPS = [
+  {
+    n: 1,
+    title: "Set up your camera",
+    body: "A short check helps you frame your face, distance, and lighting before you begin.",
+  },
+  {
+    n: 2,
+    title: "Follow simple dots",
+    body: "Each activity shows a dot to look toward, away from, or follow. It runs right in the page.",
+  },
+  {
+    n: 3,
+    title: "Review your eye movement summary",
+    body: "When you finish, Ocula builds a clear, human summary of how your eyes moved.",
+  },
+  {
+    n: 4,
+    title: "Save results to your account",
+    body: "Every session is saved to your account so you can look back over time.",
+  },
+];
+
+const MEASURES = [
+  { title: "Response timing", body: "How quickly the eyes move when a new dot appears." },
+  { title: "Gaze stability", body: "How steadily the eyes hold on a fixed point." },
+  { title: "Smooth following", body: "How closely the eyes track a moving target." },
+  { title: "Tracking quality", body: "How clearly the camera could see your eyes." },
+  { title: "Blink activity", body: "How often blinks occur during a session." },
+];
 
 export default function HomePage() {
   return (
@@ -12,90 +41,84 @@ export default function HomePage() {
       {/* How it works */}
       <section className="section">
         <div className="container">
-          <div className="center" style={{ maxWidth: 640, margin: "0 auto 40px" }}>
+          <div style={{ maxWidth: 620, marginBottom: 44 }}>
             <span className="eyebrow">How it works</span>
-            <h2>Four simple steps</h2>
-            <p>
-              No special hardware — just your webcam and a few minutes. Everything
-              runs locally on your computer.
+            <h2>From camera to summary in a few minutes.</h2>
+            <p className="lead">
+              No special hardware — just your webcam. Everything runs locally on
+              your computer.
             </p>
           </div>
-          <div className="grid grid-4">
-            <FeatureCard icon="①" title="Choose an activity">
-              Pick one of four short dot-following activities.
-            </FeatureCard>
-            <FeatureCard icon="②" title="Quick camera check">
-              We help you frame your face and check your lighting.
-            </FeatureCard>
-            <FeatureCard icon="③" title="Follow the dots">
-              The activity window opens and guides you in real time.
-            </FeatureCard>
-            <FeatureCard icon="④" title="Review your data">
-              Clear, friendly results appear here when you finish.
-            </FeatureCard>
-          </div>
-        </div>
-      </section>
-
-      {/* What the activities measure */}
-      <section className="section section-soft">
-        <div className="container">
-          <div className="center" style={{ maxWidth: 640, margin: "0 auto 40px" }}>
-            <span className="eyebrow">What the activities measure</span>
-            <h2>Eye movement patterns, captured carefully</h2>
-            <p>
-              Each activity observes a different aspect of how the eyes move.
-              These are research measures of movement — not health assessments.
-            </p>
-          </div>
-          <div className="grid grid-4">
-            {ACTIVITIES.map((a) => (
-              <div className="card" key={a.slug}>
-                <div className="ic" aria-hidden style={{ marginBottom: 12 }}>
-                  {a.icon}
+          <div className="steps-flow">
+            {STEPS.map((s) => (
+              <div className="flow-step" key={s.n}>
+                <div className="flow-num">{s.n}</div>
+                <div>
+                  <h3>{s.title}</h3>
+                  <p>{s.body}</p>
                 </div>
-                <h3 style={{ fontSize: "1.05rem" }}>{a.name}</h3>
-                <p className="small" style={{ marginBottom: 0 }}>
-                  {a.measures}
-                </p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Research vision */}
+      {/* What Ocula measures */}
+      <section className="section section-soft section-line">
+        <div className="container">
+          <div style={{ maxWidth: 620, marginBottom: 40 }}>
+            <span className="eyebrow">What Ocula measures</span>
+            <h2>A few clear signals from how the eyes move.</h2>
+            <p className="lead">
+              Each activity observes one aspect of eye movement. These are
+              research measures — not health assessments.
+            </p>
+          </div>
+          <div className="grid grid-5">
+            {MEASURES.map((m) => (
+              <div className="tile" key={m.title}>
+                <h3>{m.title}</h3>
+                <p>{m.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Why it matters */}
       <section className="section">
-        <div className="container grid grid-2" style={{ alignItems: "center", gap: 40 }}>
+        <div className="container grid grid-2" style={{ alignItems: "center", gap: 52 }}>
           <div>
-            <span className="eyebrow">Research vision</span>
-            <h2>Built to support research, not to replace clinicians</h2>
-            <p>
-              Eye movement patterns are an active area of neurological research.
-              PDEYE&apos;s role today is <strong>data collection and movement
-              analysis</strong> — measuring things like response time, fixation
-              stability, smooth pursuit, and saccade patterns.
-            </p>
-            <p>
-              Any future clinically validated model would require large clinical
-              datasets, independent validation, regulatory review, and oversight
-              by qualified healthcare professionals. PDEYE is not a diagnostic
-              tool.
-            </p>
+            <span className="eyebrow">Why it matters</span>
+            <h2>Clean data first. Conclusions later, and carefully.</h2>
+            <div className="prose">
+              <p>
+                Eye movement can reveal subtle patterns in attention, timing, and
+                movement control. Researchers study these patterns in many
+                neurological conditions, including Parkinson&apos;s disease.
+              </p>
+              <p>
+                Ocula focuses on collecting clean, structured eye movement data —
+                <strong> not making medical conclusions</strong>. Any future
+                clinically validated tool would require clinical datasets,
+                independent validation, regulatory review, and oversight by
+                qualified healthcare professionals.
+              </p>
+            </div>
             <Link className="btn btn-secondary mt-2" href="/research">
               Read about the research →
             </Link>
           </div>
           <div className="card" style={{ background: "var(--bg-softer)" }}>
-            <h3>What PDEYE does</h3>
-            <ul className="checklist" style={{ marginTop: 14 }}>
+            <h3 style={{ marginBottom: 16 }}>What Ocula does — and doesn&apos;t</h3>
+            <ul className="checklist">
               <li>
                 <span className="tick ok">✓</span>
                 <span>Records eye movement during structured activities</span>
               </li>
               <li>
                 <span className="tick ok">✓</span>
-                <span>Reports task performance and tracking quality</span>
+                <span>Reports tracking quality and a friendly summary</span>
               </li>
               <li>
                 <span className="tick ok">✓</span>
@@ -112,50 +135,27 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Privacy + Limitations + Roadmap */}
-      <section className="section section-soft">
-        <div className="container">
-          <div className="grid grid-3">
-            <div className="card">
-              <div className="ic" aria-hidden style={{ marginBottom: 12 }}>
-                🔒
-              </div>
-              <h3>Privacy &amp; data storage</h3>
-              <p className="small">
-                By default, PDEYE stores results locally on your computer. Raw
-                eye-tracking files and session summaries are saved in the local
-                project folder unless you choose to export them. Cloud syncing is
-                not enabled in this prototype.
-              </p>
-            </div>
-            <div className="card">
-              <div className="ic" aria-hidden style={{ marginBottom: 12 }}>
-                ⚖️
-              </div>
-              <h3>Limitations</h3>
-              <p className="small">
-                PDEYE uses a standard webcam, so tracking quality depends on your
-                camera, lighting, and distance. It has not been clinically
-                validated. Results describe eye movement during the activities —
-                nothing more.
-              </p>
-            </div>
-            <div className="card">
-              <div className="ic" aria-hidden style={{ marginBottom: 12 }}>
-                🧭
-              </div>
-              <h3>Future roadmap</h3>
-              <p className="small">
-                Planned work includes more activities, optional calibration,
-                richer visualizations, and contributing anonymized data to
-                Parkinson&apos;s-related research — always under appropriate
-                validation and oversight.
-              </p>
-            </div>
+      {/* Privacy */}
+      <section className="section section-soft section-line">
+        <div className="container grid grid-2" style={{ gap: 52, alignItems: "start" }}>
+          <div>
+            <span className="eyebrow">Privacy</span>
+            <h2>Your sessions stay on your computer.</h2>
+            <p className="lead-xl maxw-ch">
+              Camera frames are processed locally by the Ocula backend in this
+              prototype. Raw video is not saved unless debug recording is enabled
+              — Ocula keeps the extracted eye-movement data and session summaries.
+            </p>
           </div>
-
-          <div className="mt-4">
-            <DisclaimerBox />
+          <div className="grid" style={{ gap: 14 }}>
+            <div className="tile">
+              <h3>Local by default</h3>
+              <p>Results and exports are written to the local project folder. Cloud syncing is not enabled.</p>
+            </div>
+            <div className="tile">
+              <h3>You control exports</h3>
+              <p>Download your research data as CSV/JSON whenever you like, from your results.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -163,15 +163,18 @@ export default function HomePage() {
       {/* CTA */}
       <section className="section">
         <div className="container center" style={{ maxWidth: 620 }}>
-          <h2>Ready to try an activity?</h2>
-          <p>It takes just a couple of minutes and runs entirely on your machine.</p>
-          <div className="row" style={{ justifyContent: "center", marginTop: 8 }}>
-            <Link className="btn btn-primary btn-lg" href="/test">
-              Start an Eye Movement Session
+          <h2>Ready to try a session?</h2>
+          <p className="lead">It takes a couple of minutes and runs entirely on your machine.</p>
+          <div className="row" style={{ justifyContent: "center", marginTop: 12 }}>
+            <Link className="btn btn-primary btn-lg" href="/signup">
+              Create your account
             </Link>
-            <Link className="btn btn-ghost btn-lg" href="/history">
-              View previous results
+            <Link className="btn btn-ghost btn-lg" href="/login">
+              Log in
             </Link>
+          </div>
+          <div className="mt-4" style={{ textAlign: "left" }}>
+            <DisclaimerBox />
           </div>
         </div>
       </section>

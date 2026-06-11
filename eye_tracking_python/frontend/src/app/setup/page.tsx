@@ -5,14 +5,26 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import TaskInstructions from "@/components/TaskInstructions";
 import DisclaimerBox from "@/components/DisclaimerBox";
+import { useRequireAuth } from "@/lib/auth";
 import { activityBySlug } from "@/lib/constants";
 import type { TaskType } from "@/lib/types";
 
 function SetupInner() {
   const router = useRouter();
   const params = useSearchParams();
+  const { user, loading: authLoading } = useRequireAuth();
   const slug = params.get("task") ?? "";
   const activity = activityBySlug(slug);
+
+  if (authLoading || !user) {
+    return (
+      <section className="section">
+        <div className="container">
+          <p className="muted">Checking your account…</p>
+        </div>
+      </section>
+    );
+  }
 
   if (!activity) {
     return (
@@ -48,7 +60,7 @@ function SetupInner() {
             <li><span className="tick ok">④</span><span>Your results appear automatically when you finish.</span></li>
           </ul>
           <div className="note small mt-2">
-            Camera frames are processed locally by the PDEYE backend in this
+            Camera frames are processed locally by the Ocula backend in this
             prototype. Raw video is not saved unless debug recording is enabled.
           </div>
         </div>
