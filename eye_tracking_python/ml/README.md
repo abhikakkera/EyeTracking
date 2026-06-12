@@ -45,9 +45,35 @@ python -m ml.simulate --n-control 30 --n-pd 30 --runs 2 --out ml/_synthetic
 python -m ml.train --data-dir ml/_synthetic --out ml/_artifacts
 ```
 
-You'll see subject-level AUROC / sensitivity / specificity, the **leakage demo**
-(how much naive row-level CV inflates the score), and the top features. Artifacts
-land in `ml/_artifacts/` (`report.json`, `features.csv`, `model.joblib`).
+You'll see subject-level AUROC (with a 95% CI), sensitivity / specificity, the
+**leakage demo** (how much naive row-level CV inflates the score), and the top
+features. Artifacts land in `ml/_artifacts/` (`report.json`, `features.csv`,
+`predictions.csv`, `model.joblib`).
+
+## Local web app (no command line)
+
+Everything above, in the browser — generate data, train, see results, and score
+one person:
+
+```bash
+cd eye_tracking_python
+pip install -r ml/requirements.txt
+streamlit run ml/app.py        # opens http://localhost:8501
+```
+
+## Score one person (research pattern score)
+
+```bash
+python -m ml.predict --data-dir ml/_synthetic --battery B00007
+```
+
+Outputs a **0–100 PD-pattern similarity score** and a vague band (low/medium/high
+similarity to the training "PD" group).
+
+> ⚠️ This score is **not a diagnosis** and **not a probability of disease**. A
+> model score only becomes a real disease probability after calibration to the
+> condition's base rate; a screening aid flags "maybe look closer", it never
+> decides. On synthetic data the score has no clinical meaning at all.
 
 ## Run the tests
 

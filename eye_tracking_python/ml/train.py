@@ -95,6 +95,31 @@ def _youden_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> float:
     return float(thr[int(np.argmax(j))])
 
 
+def _bootstrap_auroc_ci(y: np.ndarray, prob: np.ndarray, groups: np.ndarray,
+                        n_boot: int = 2000, seed: int = 0) -> list[float]:
+    """95% confidence interval for AUROC, resampling whole SUBJECTS.
+
+    With repeated measures you must resample by subject (the cluster), not by
+    row, or the CI comes out falsely narrow. With few subjects this interval is
+    wide on purpose — that honesty is the point.
+    """
+    rng = np.random.default_rng(seed)
+    subjects = np.unique(groups)
+    idx_by_subj = {s: np.where(groups == s)[0] for s in subjects}
+    aucs = []
+    for _ in range(n_boot):
+        picked = rng.choice(subjects, size=len(subjects), replace=True)
+        rows = np.concatenate([idx_by_subj[s] for s in picked])
+        yb, pb = y[rows], prob[rows]
+        if np.unique(yb).size < 2:
+            continue
+        aucs.append(roc_auc_score(yb, pb))
+    if not aucs:
+        return [float("nan"), float("nan")]
+    lo, hi = np.percentile(aucs, [2.5, 97.5])
+    return [round(float(lo), 3), round(float(hi), 3)]
+
+
 def _univariate_separation(X: pd.DataFrame, y: np.ndarray) -> list[dict]:
     """How well each single feature separates the groups (descriptive).
 
@@ -134,6 +159,7 @@ def run(data_dir, manifest, out_dir, model_kind="rf", folds=5, seed=0,
     oof_grouped = _oof_predict(model_kind, X, y, groups, sgkf, seed)
     thr = _youden_threshold(y, oof_grouped)
     grouped = _metrics(y, oof_grouped, threshold=thr)
+    grouped["auroc_ci95"] = _bootstrap_auroc_ci(y, oof_grouped, groups, seed=seed)
 
     report: dict = {
         "n_batteries": int(len(df)),
@@ -163,6 +189,11 @@ def run(data_dir, manifest, out_dir, model_kind="rf", folds=5, seed=0,
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     df.to_csv(out / "features.csv", index=False)
+    # Honest per-person scores: each battery's score comes from a fold whose model
+    # never saw that subject (out-of-fold). Use these for the per-person view.
+    preds = df[["battery_id", "subject_id", "label"]].copy()
+    preds["pd_pattern_score"] = oof_grouped
+    preds.to_csv(out / "predictions.csv", index=False)
     with open(out / "report.json", "w") as fh:
         json.dump(report, fh, indent=2)
     try:
@@ -185,7 +216,8 @@ def _print_report(r: dict) -> None:
     print(f"  model: {r['model']}   subject-level folds: {r['cv_folds']}")
     print("-" * 64)
     print("  SUBJECT-LEVEL CV (the number you should trust):")
-    print(f"    AUROC               {g['auroc']:.3f}")
+    ci = g.get("auroc_ci95", [float("nan"), float("nan")])
+    print(f"    AUROC               {g['auroc']:.3f}   95% CI [{ci[0]:.3f}, {ci[1]:.3f}]")
     print(f"    Avg precision       {g['average_precision']:.3f}")
     print(f"    Balanced accuracy   {g['balanced_accuracy']:.3f}")
     print(f"    Sensitivity         {g['sensitivity']:.3f}   "
