@@ -30,3 +30,7 @@ __pycache__/
 eye_tracking_python/models/
 eye_tracking_python/sessions/
 eye_tracking_python/.pytest_cache/
+
+# ML pipeline generated data + artifacts (synthetic cohorts, trained models)
+eye_tracking_python/ml/_synthetic/
+eye_tracking_python/ml/_artifacts/
